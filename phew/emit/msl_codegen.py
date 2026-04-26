@@ -48,7 +48,12 @@ def _msl(dtype) -> str:
 def _lit(value: object, msl_type: str) -> str:
     """Format a Python scalar as an MSL literal."""
     if isinstance(value, float):
-        s = f"{value:.8g}f"
+        s = f"{value:.8g}"
+        # Ensure the literal has a decimal point or exponent so that appending
+        # 'f' produces valid Metal syntax (e.g. '10f' is illegal; '10.0f' is not)
+        if "." not in s and "e" not in s and "E" not in s:
+            s += ".0"
+        s += "f"
         return s if msl_type == "float" else f"({msl_type}){s}"
     if isinstance(value, int):
         return str(value)

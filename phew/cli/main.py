@@ -209,18 +209,21 @@ def run(
 
         if diff:
             if diff_text:
+                from rich.markup import escape
+
                 console.print("\n[bold]Diff:[/bold]")
                 for line in diff_text.splitlines():
+                    esc = escape(line)
                     if line.startswith("+++") or line.startswith("---"):
-                        console.print(f"[bold]{line}[/bold]", markup=False)
+                        console.print(f"[bold]{esc}[/bold]")
                     elif line.startswith("+"):
-                        console.print(f"[green]{line}[/green]", markup=False)
+                        console.print(f"[green]{esc}[/green]")
                     elif line.startswith("-"):
-                        console.print(f"[red]{line}[/red]", markup=False)
+                        console.print(f"[red]{esc}[/red]")
                     elif line.startswith("@@"):
-                        console.print(f"[cyan]{line}[/cyan]", markup=False)
+                        console.print(f"[cyan]{esc}[/cyan]")
                     else:
-                        console.print(line, markup=False)
+                        console.print(esc)
             else:
                 console.print("\n[dim]No changes — optimized source is identical to input.[/dim]")
 

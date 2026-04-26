@@ -226,7 +226,7 @@ def _register_layout_rules(egraph) -> None:
 def _register_precision_rules(egraph) -> None:
     from egglog import i64 as ei64
 
-    a = vars_("a", Tensor)
+    (a,) = vars_("a", Tensor)
     DTYPE_FP32 = ei64(0)
     egraph.register(
         rewrite(cast(cast(a, DTYPE_FP32), DTYPE_FP32)).to(a),
