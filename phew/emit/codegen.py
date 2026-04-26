@@ -371,12 +371,13 @@ class MLXCodegen:
                 # Output shapes: first n_batch_dims are dynamic, rest are static.
                 def _out_shape_expr(out_sh):
                     dims = [
-                        dim_vars[i] if i < n_batch_dims else str(d)
-                        for i, d in enumerate(out_sh)
+                        dim_vars[i] if i < n_batch_dims else str(d) for i, d in enumerate(out_sh)
                     ]
                     return "(" + ", ".join(dims) + ("," if len(dims) == 1 else "") + ")"
 
-                shapes_expr = "[" + ", ".join(_out_shape_expr(sh) for sh in node.output_shapes) + "]"
+                shapes_expr = (
+                    "[" + ", ".join(_out_shape_expr(sh) for sh in node.output_shapes) + "]"
+                )
             else:
                 shapes_expr = str(node.output_shapes)
                 grid_expr = str(node.grid) if node.grid else "(1, 1, 1)"

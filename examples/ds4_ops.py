@@ -16,12 +16,12 @@ import mlx.core as mx
 import numpy as np
 
 # DS4 default config constants
-HC = 4           # hc_mult
-D = 4096         # hidden_size
-MIX = (2 + HC) * HC   # 24
-ITERS = 20       # hc_sinkhorn_iters
+HC = 4  # hc_mult
+D = 4096  # hidden_size
+MIX = (2 + HC) * HC  # 24
+ITERS = 20  # hc_sinkhorn_iters
 NORM_EPS = 1e-6  # rms_norm_eps
-LIMIT = 10.0     # swiglu_limit
+LIMIT = 10.0  # swiglu_limit
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +30,7 @@ LIMIT = 10.0     # swiglu_limit
 # During tracing the call is recorded as a MetalKernel IR node; at runtime
 # it delegates to the real kernel.
 # ---------------------------------------------------------------------------
+
 
 def _make_hc_split_sinkhorn_kernel():
     if mx.default_device() != mx.gpu or not mx.metal.is_available():
@@ -153,10 +154,9 @@ def hc_split_sinkhorn(mixes, scale, base, eps_arr):
     pre_scale, post_scale, comb_scale = scale[0], scale[1], scale[2]
     pre = mx.sigmoid(mixes[..., :HC] * pre_scale + base[:HC]) + eps
     post = 2 * mx.sigmoid(mixes[..., HC : 2 * HC] * post_scale + base[HC : 2 * HC])
-    comb = (
-        mixes[..., 2 * HC :].reshape(*mixes.shape[:-1], HC, HC) * comb_scale
-        + base[2 * HC :].reshape(HC, HC)
-    )
+    comb = mixes[..., 2 * HC :].reshape(*mixes.shape[:-1], HC, HC) * comb_scale + base[
+        2 * HC :
+    ].reshape(HC, HC)
     comb = mx.softmax(comb, axis=-1, precise=True) + eps
     comb = comb / (comb.sum(axis=-2, keepdims=True) + eps)
     for _ in range(max(ITERS - 1, 0)):
@@ -200,19 +200,19 @@ def fn(x, fn_T, hc_scale, hc_base, eps_arr, gate, up):
     """HC collapse → SwiGLU → HC expand (one transformer sub-block)."""
     B, L, H, Dv = x.shape
     flat = x.reshape(B, L, H * Dv).astype(mx.float32)
-    mixes = _hc_mixes(flat, fn_T)                         # (B, L, MIX)
+    mixes = _hc_mixes(flat, fn_T)  # (B, L, MIX)
     pre, post, comb = hc_split_sinkhorn(mixes, hc_scale, hc_base, eps_arr)
-    collapsed = _hc_collapse_op(pre, x)                   # (B, L, D)
-    block_out = _limited_swiglu(gate, up)                  # (B, L, D)
-    return _hc_expand_op(post, block_out, comb, x)        # (B, L, HC, D)
+    _collapsed = _hc_collapse_op(pre, x)  # (B, L, D)
+    block_out = _limited_swiglu(gate, up)  # (B, L, D)
+    return _hc_expand_op(post, block_out, comb, x)  # (B, L, HC, D)
 
 
 fn_name = "ds4_hc_cycle_opt"
 
 _SIZES = {
-    "small":   (1, 1),    # single token, batch=1
-    "typical": (1, 8),    # short generation context
-    "large":   (2, 64),   # batched / longer prompt
+    "small": (1, 1),  # single token, batch=1
+    "typical": (1, 8),  # short generation context
+    "large": (2, 64),  # batched / longer prompt
 }
 
 

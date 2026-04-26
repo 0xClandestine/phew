@@ -1,5 +1,5 @@
 import mlx.core as mx
-import mlx.core.fast as fast
+
 
 @mx.compile
 def ds4_hc_cycle_opt(x0, x1, x2, x3, x4, x5, x6):
@@ -14,8 +14,8 @@ def ds4_hc_cycle_opt(x0, x1, x2, x3, x4, x5, x6):
     t9 = t8 * t7
     _kernel_17 = mx.fast.metal_kernel(
         name="kernel_17",
-        input_names=['mixes', 'scale', 'base', 'eps'],
-        output_names=['pre', 'post', 'comb'],
+        input_names=["mixes", "scale", "base", "eps"],
+        output_names=["pre", "post", "comb"],
         source="""
         uint idx = thread_position_in_grid.x;
         constexpr int MIX  = (2 + HC) * HC;
@@ -95,7 +95,7 @@ def ds4_hc_cycle_opt(x0, x1, x2, x3, x4, x5, x6):
         output_dtypes=[mx.float32, mx.float32, mx.float32],
         grid=(_D0_17 * _D1_17, 1, 1),
         threadgroup=(256, 1, 1),
-        template=[('HC', 4), ('ITERS', 20)],
+        template=[("HC", 4), ("ITERS", 20)],
     )
     t11 = kernel10_out[0]
     t12 = kernel10_out[1]
@@ -108,8 +108,8 @@ def ds4_hc_cycle_opt(x0, x1, x2, x3, x4, x5, x6):
     t19 = mx.expand_dims(t12, 3)
     _kernel_44 = mx.fast.metal_kernel(
         name="kernel_44",
-        input_names=['inp0', 'inp1'],
-        output_names=['out0'],
+        input_names=["inp0", "inp1"],
+        output_names=["out0"],
         source="""    uint elem = thread_position_in_grid.x;
     
     float v1 = inp0[elem];

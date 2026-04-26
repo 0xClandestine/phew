@@ -98,9 +98,7 @@ class _MetalKernelWrapper:
 
         inp_node_ids = [x._node.id for x in inputs if isinstance(x, _TracedArray)]
         inp_shapes = [x._node.shape for x in inputs if isinstance(x, _TracedArray)]
-        out_dtypes_ir = [
-            d if isinstance(d, Dtype) else Dtype.from_mlx(d) for d in output_dtypes
-        ]
+        out_dtypes_ir = [d if isinstance(d, Dtype) else Dtype.from_mlx(d) for d in output_dtypes]
         out_shapes = [tuple(s) for s in output_shapes]
         tg = threadgroup if isinstance(threadgroup, tuple) else (int(threadgroup), 1, 1)
         g = grid if isinstance(grid, tuple) else (int(grid), 1, 1)

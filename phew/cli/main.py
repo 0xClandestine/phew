@@ -152,7 +152,17 @@ def cli():
     help="Write the unified diff to FILE (implies --diff)",
 )
 def run(
-    input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_iters, strategy, fusion, diff, diff_output
+    input_file,
+    output,
+    trace,
+    allow_fp16,
+    allow_bf16,
+    allow_quant,
+    eqsat_iters,
+    strategy,
+    fusion,
+    diff,
+    diff_output,
 ):
     """Optimize INPUT_FILE and emit faster equivalent code."""
     from phew import Optimizer
