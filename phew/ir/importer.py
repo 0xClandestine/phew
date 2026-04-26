@@ -27,6 +27,7 @@ from .ops import (
     Input,
     MatMul,
     Reduce,
+    Repeat,
     Reshape,
     Slice,
     Transpose,
@@ -465,14 +466,16 @@ class _TracingContext:
     def softmax(self, x, axis=-1, **_):
         if not isinstance(x, _TracedArray):
             return x
-        # softmax = exp(x - max(x)) / sum(exp(...))
-        m = self._reduce(x, "max", axis, True)
-        shifted = x - m
-        exp_node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[shifted._node.id], op="exp")
-        self._graph.add(exp_node)
-        exp_t = _TracedArray(exp_node, self._graph)
-        s = self._reduce(exp_t, "sum", axis, True)
-        return exp_t / s
+        node = Reduce(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="softmax",
+            axes=(axis % len(x.shape),) if isinstance(axis, int) else tuple(axis),
+            keepdims=True,
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
 
     def sqrt(self, x, **_):
         if not isinstance(x, _TracedArray):
@@ -975,19 +978,20 @@ class _TracingContext:
     def repeat(self, x, repeats, axis=None, **_):
         if not isinstance(x, _TracedArray):
             return x
+        ax = 0 if axis is None else axis % len(x.shape)
         if axis is None:
             flat = 1
             for s in x.shape:
                 flat *= s
             new_shape = (flat * repeats,)
         else:
-            ax = axis % len(x.shape)
             new_shape = x.shape[:ax] + (x.shape[ax] * repeats,) + x.shape[ax + 1 :]
-        node = Concat(
+        node = Repeat(
             shape=new_shape,
             dtype=x.dtype,
-            inputs=[x._node.id] * repeats,
-            axis=axis if axis is not None else 0,
+            inputs=[x._node.id],
+            repeats=repeats,
+            axis=ax,
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)

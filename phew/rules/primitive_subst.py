@@ -287,40 +287,58 @@ class PrimitiveSubstPass:
 
     def _match_sdpa(self, graph: "Graph") -> bool:
         """Match softmax(Q @ K^T * scale) @ V → FastScaledDotProductAttention."""
-        from phew.ir import FastScaledDotProductAttention, MatMul, Reduce
+        from phew.ir import Cast, Constant, Elementwise, FastScaledDotProductAttention, MatMul, Reduce, Transpose
 
         changed = False
 
         for node in list(graph.topo_order()):
-            # Final matmul: weights @ V
+            # Final matmul: attn_weights @ V
             if not isinstance(node, MatMul):
                 continue
             preds = graph.predecessors(node.id)
             if len(preds) < 2:
                 continue
-            # One pred should be a softmax (Elementwise exp chain or reduce+div)
             v_node = preds[1]
             softmax_node = preds[0]
 
-            # Conservative check: look for a Reduce(max) or Reduce(sum) before
-            # the matmul — characteristic of softmax
-            softmax_preds = graph.predecessors(softmax_node.id)
-            if not any(isinstance(p, Reduce) for p in softmax_preds):
-                continue
+            # Walk past Cast nodes (e.g. bfloat16 cast after softmax)
+            while isinstance(softmax_node, Cast):
+                cast_preds = graph.predecessors(softmax_node.id)
+                if not cast_preds:
+                    break
+                softmax_node = cast_preds[0]
 
-            # Look for the QK matmul that feeds the softmax chain
-            def find_matmul_ancestor(n, depth=0):
-                if depth > 5:
+            # Must be a softmax reduce or have one as a direct predecessor
+            if isinstance(softmax_node, Reduce) and softmax_node.op == "softmax":
+                pass  # direct softmax
+            else:
+                softmax_preds = graph.predecessors(softmax_node.id)
+                if not any(isinstance(p, Reduce) and p.op == "softmax" for p in softmax_preds):
+                    # Fall back: any Reduce predecessor (sum/max characteristic of manual softmax)
+                    if not any(isinstance(p, Reduce) for p in softmax_preds):
+                        continue
+
+            # Walk back from softmax to find QK matmul and extract scale factor
+            scale = 1.0
+
+            def find_matmul_and_scale(n, depth=0):
+                nonlocal scale
+                if depth > 8:
                     return None
                 if isinstance(n, MatMul):
                     return n
                 for p in graph.predecessors(n.id):
-                    result = find_matmul_ancestor(p, depth + 1)
+                    # If this node is a mul with a Constant, extract the scale
+                    if isinstance(n, Elementwise) and n.op in ("mul", "multiply"):
+                        for pp in graph.predecessors(n.id):
+                            if isinstance(pp, Constant) and isinstance(pp.value, (int, float)):
+                                scale = float(pp.value)
+                    result = find_matmul_and_scale(p, depth + 1)
                     if result:
                         return result
                 return None
 
-            qk_matmul = find_matmul_ancestor(softmax_node)
+            qk_matmul = find_matmul_and_scale(softmax_node)
             if qk_matmul is None:
                 continue
             qk_preds = graph.predecessors(qk_matmul.id)
@@ -328,11 +346,19 @@ class PrimitiveSubstPass:
                 continue
             q_node, k_node = qk_preds[0], qk_preds[1]
 
+            # mx.fast.scaled_dot_product_attention expects keys in (B, H, S, D).
+            # If the QK matmul used K.T (a Transpose node), unwrap it so we pass
+            # the pre-transposed keys.
+            if isinstance(k_node, Transpose):
+                k_preds = graph.predecessors(k_node.id)
+                if k_preds:
+                    k_node = k_preds[0]
+
             new_node = FastScaledDotProductAttention(
                 shape=node.shape,
                 dtype=node.dtype,
                 inputs=[q_node.id, k_node.id, v_node.id],
-                scale=1.0,
+                scale=scale,
             )
             graph.replace(node.id, new_node)
             changed = True

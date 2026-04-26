@@ -101,6 +101,14 @@ class Concat(Node):
 
 
 @dataclass
+class Repeat(Node):
+    """Repeat elements along an axis (mx.repeat semantics)."""
+
+    repeats: int = 1
+    axis: int = 0
+
+
+@dataclass
 class Split(Node):
     """Split along an axis."""
 

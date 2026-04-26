@@ -67,12 +67,12 @@ class Graph:
         return [self._nodes[nid] for nid in self._order]
 
     def topo_order(self) -> list[Node]:
-        """Return nodes in topological order (sources first)."""
+        """Return nodes in topological order (sources first), reachable from outputs."""
         visited: set[NodeId] = set()
         result: list[Node] = []
 
         def visit(nid: NodeId) -> None:
-            if nid in visited:
+            if nid in visited or nid not in self._nodes:
                 return
             visited.add(nid)
             node = self._nodes[nid]
@@ -81,7 +81,9 @@ class Graph:
                     visit(inp)
             result.append(node)
 
-        for nid in self._order:
+        # Only visit nodes reachable from declared outputs
+        roots = self.outputs if self.outputs else list(self._order)
+        for nid in roots:
             visit(nid)
         return result
 

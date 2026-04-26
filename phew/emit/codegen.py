@@ -36,7 +36,9 @@ class MLXCodegen:
         # the whole function with @mx.compile rather than emitting a broken lambda.
         has_compile = any(isinstance(graph[o], Compile) for o in graph.outputs if o in graph._nodes)
 
-        inputs = [n for n in graph.topo_order() if isinstance(n, Input)]
+        # Use graph.inputs() (insertion order) for the signature so that the
+        # emitted function's positional parameters match how the caller passes args.
+        inputs = graph.inputs()
         args = ", ".join(n.name or f"x{i}" for i, n in enumerate(inputs))
 
         if has_compile:
@@ -67,6 +69,7 @@ class MLXCodegen:
             MetalKernelSelect,
             QuantizedMatMul,
             Reduce,
+            Repeat,
             Reshape,
             Slice,
             Transpose,
@@ -117,12 +120,20 @@ class MLXCodegen:
                     lines.append(f"{vname} = mx.max({ins[0]}, axis={axes}, keepdims={kd})")
                 elif node.op == "min":
                     lines.append(f"{vname} = mx.min({ins[0]}, axis={axes}, keepdims={kd})")
+                elif node.op == "softmax":
+                    # softmax takes axis as a scalar, not a list
+                    ax = axes[0] if axes and len(axes) == 1 else axes
+                    lines.append(f"{vname} = mx.softmax({ins[0]}, axis={ax})")
                 else:
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={axes}, keepdims={kd})")
 
             elif isinstance(node, Concat):
                 vname = fresh()
-                lines.append(f"{vname} = mx.concat([{', '.join(ins)}], axis={node.axis})")
+                lines.append(f"{vname} = mx.concatenate([{', '.join(ins)}], axis={node.axis})")
+
+            elif isinstance(node, Repeat):
+                vname = fresh()
+                lines.append(f"{vname} = mx.repeat({ins[0]}, {node.repeats}, axis={node.axis})")
 
             elif isinstance(node, Elementwise):
                 vname = fresh()
