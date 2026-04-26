@@ -93,7 +93,7 @@ def _get_fn_and_factory(mod) -> tuple[Callable, Callable]:
 
 
 @click.group()
-@click.version_option(package_name="phew")
+@click.version_option(package_name="phew-mlx")
 def cli():
     """PHEW — MLX/Metal superoptimizer for Apple Silicon."""
 
