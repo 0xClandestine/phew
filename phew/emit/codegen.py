@@ -54,6 +54,7 @@ class MLXCodegen:
         from phew.ir import (
             Cast,
             Compile,
+            Concat,
             Constant,
             Elementwise,
             FastLayerNorm,
@@ -114,6 +115,10 @@ class MLXCodegen:
                     lines.append(f"{vname} = mx.min({ins[0]}, axis={axes}, keepdims={kd})")
                 else:
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={axes}, keepdims={kd})")
+
+            elif isinstance(node, Concat):
+                vname = fresh()
+                lines.append(f"{vname} = mx.concat([{', '.join(ins)}], axis={node.axis})")
 
             elif isinstance(node, Elementwise):
                 vname = fresh()

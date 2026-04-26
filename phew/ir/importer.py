@@ -21,6 +21,7 @@ from .graph import Graph
 from .node import Node
 from .ops import (
     Cast,
+    Concat,
     Constant,
     Elementwise,
     Input,
@@ -223,6 +224,16 @@ class _TracedArray:
     def T(self) -> "_TracedArray":
         axes = tuple(range(len(self._node.shape) - 1, -1, -1))
         new_shape = tuple(reversed(self._node.shape))
+        node = Transpose(shape=new_shape, dtype=self._node.dtype, inputs=[self._node.id], axes=axes)
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def transpose(self, axes=None) -> "_TracedArray":
+        ndim = len(self._node.shape)
+        if axes is None:
+            axes = tuple(range(ndim - 1, -1, -1))
+        axes = tuple(a % ndim for a in axes)
+        new_shape = tuple(self._node.shape[a] for a in axes)
         node = Transpose(shape=new_shape, dtype=self._node.dtype, inputs=[self._node.id], axes=axes)
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -839,11 +850,11 @@ class _TracingContext:
         axis = axis % len(ref.shape)
         new_dim = sum(a.shape[axis] if isinstance(a, _TracedArray) else 0 for a in arrays)
         new_shape = ref.shape[:axis] + (new_dim,) + ref.shape[axis + 1 :]
-        node = Elementwise(
+        node = Concat(
             shape=new_shape,
             dtype=ref.dtype,
             inputs=[a._node.id for a in arrays if isinstance(a, _TracedArray)],
-            op="concat",
+            axis=axis,
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -957,6 +968,26 @@ class _TracingContext:
             dtype=x.dtype,
             inputs=[x._node.id, idx_node_id],
             op="take",
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def repeat(self, x, repeats, axis=None, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        if axis is None:
+            flat = 1
+            for s in x.shape:
+                flat *= s
+            new_shape = (flat * repeats,)
+        else:
+            ax = axis % len(x.shape)
+            new_shape = x.shape[:ax] + (x.shape[ax] * repeats,) + x.shape[ax + 1 :]
+        node = Concat(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id] * repeats,
+            axis=axis if axis is not None else 0,
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1718,6 +1749,7 @@ def trace_to_graph(
         "moveaxis",
         "broadcast_to",
         "take",
+        "repeat",
         "roll",
         "pad",
         "unflatten",
