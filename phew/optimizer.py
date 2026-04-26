@@ -174,11 +174,40 @@ class Optimizer:
             search_trace.append("  SKIPPED (egglog not installed)")
 
         # ----------------------------------------------------------------
-        # Step 5 — Emit optimized code
+        # Step 5a — Phase-2 kernel parameter search (enable_fusion flag)
+        # Triggered when MetalKernel nodes appear in the graph, meaning the
+        # input used mx.fast.metal_kernel and Phase-1 didn't replace it.
+        # ----------------------------------------------------------------
+        if self.enable_fusion:
+            from .emit import KernelParamSearch
+            from .ir import MetalKernel
+
+            metal_nodes = [n for n in graph.topo_order() if isinstance(n, MetalKernel)]
+            if metal_nodes:
+                search_trace.append("Step 5a: Phase-2 kernel parameter search")
+                for knode in metal_nodes:
+                    searcher = KernelParamSearch(baseline_fn=self.fn, max_candidates=50)
+                    try:
+                        candidates = searcher.search(knode, self.input_factory, profile_data)
+                        if candidates:
+                            best = candidates[0]
+                            search_trace.append(
+                                f"  kernel: best {best.measured_ms:.3f} ms "
+                                f"(tg={best.threadgroup}, vw={best.vector_width})"
+                            )
+                        else:
+                            search_trace.append("  Phase-2: no verified candidates found")
+                    except Exception as exc:
+                        warnings.append(f"Phase-2 search failed: {exc}")
+            else:
+                search_trace.append("Step 5a: Phase-2 skipped (no MetalKernel nodes in graph)")
+
+        # ----------------------------------------------------------------
+        # Step 5b — Emit optimized code
         # ----------------------------------------------------------------
         codegen = MLXCodegen()
         output_source = codegen.emit(graph, fn_name=self.fn_name)
-        search_trace.append("Step 5: Code emitted")
+        search_trace.append("Step 5b: Code emitted")
 
         # ----------------------------------------------------------------
         # Step 6 — Build optimized callable and benchmark

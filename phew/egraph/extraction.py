@@ -80,15 +80,18 @@ class Extractor:
     def _ilp(self, egraph, root_expr, node_map, graph, cost_model) -> ExtractionResult:
         """Joint ILP extraction via scipy.optimize.milp.
 
-        Falls back to greedy if scipy is unavailable.
+        True ILP extraction requires iterating over e-classes and e-nodes to
+        set up the binary selection variables (Tensat §3.2 formulation).
+        The egglog Python bindings do not currently expose e-class internals,
+        so the ILP formulation cannot be constructed from the outside.
+        Falls back to greedy until egglog adds an e-class API or we switch to
+        a library that exposes this (e.g. egg-smol or a custom e-graph).
         """
         try:
             from scipy.optimize import milp  # noqa: F401
         except ImportError:
             return self._greedy(egraph, root_expr, node_map, graph, cost_model)
 
-        # For now fall back to greedy; full ILP formulation is a future milestone.
-        # The greedy extractor is correct and sufficient for Phase-1 v1.
         result = self._greedy(egraph, root_expr, node_map, graph, cost_model)
         result.strategy = "ilp-fallback-greedy"
         return result

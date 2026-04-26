@@ -103,6 +103,10 @@ def quantized_matmul(x: Tensor, w: Tensor, bits: i64) -> Tensor: ...
 def compiled(x: Tensor) -> Tensor: ...
 
 
+@function(cost=1)
+def fused_ew_chain(op1: i64, op2: i64, a: Tensor) -> Tensor: ...
+
+
 # ---------------------------------------------------------------------------
 # Build egraph from a phew Graph
 # ---------------------------------------------------------------------------
@@ -208,8 +212,14 @@ def _register_algebraic_rules(egraph) -> None:
 
 
 def _register_fusion_rules(egraph) -> None:
-    # Full fusion rules require shape-aware patterns; handled at Graph level.
-    pass
+    # Fuse consecutive unary elementwise ops into a single kernel pass.
+    # The round-trip back to Graph (extraction.py) is not yet implemented,
+    # so these rules inform cost estimation only; emitted code is unaffected.
+    (a,) = vars_("a", Tensor)
+    op1, op2 = vars_("op1 op2", i64)
+    egraph.register(
+        rewrite(elementwise(op2, elementwise(op1, a))).to(fused_ew_chain(op1, op2, a)),
+    )
 
 
 def _register_layout_rules(egraph) -> None:
@@ -234,8 +244,12 @@ def _register_precision_rules(egraph) -> None:
 
 
 def _register_primitive_subst_rules(egraph) -> None:
-    # Primitive substitution operates at the phew Graph level before egraph
-    # encoding (see rules/primitive_subst.py).
+    # Primitive substitution (rms_norm, layer_norm, rope, sdpa) runs as a
+    # structural graph pass before egraph encoding (rules/primitive_subst.py).
+    # It cannot be expressed as egglog rewrites without shape-aware types,
+    # because the current Tensor encoding carries no shape or op-id information.
+    # Fast.* nodes inserted by the graph pass are encoded directly by
+    # build_egraph() with cost=1 and will be preferred by the extractor.
     pass
 
 
