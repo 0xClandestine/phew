@@ -1563,6 +1563,20 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def logcumsumexp(self, x, axis=None, reverse=False, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Reduce(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="logcumsumexp",
+            axes=(),
+            keepdims=True,
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def eval(self, *args, **_):
         pass  # no-op in tracing
 
@@ -1694,6 +1708,7 @@ def trace_to_graph(
         "partition",
         "cumsum",
         "cumprod",
+        "logcumsumexp",
         "concat",
         "concatenate",
         "split",

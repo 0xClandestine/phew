@@ -99,6 +99,7 @@ PATCHED = {
     "partition",
     "cumsum",
     "cumprod",
+    "logcumsumexp",
     # shape / indexing
     "concat",
     "concatenate",
