@@ -115,11 +115,10 @@ Named PHEW for a reason:
 
 - **E-graph round-trip is incomplete.** `_egglog_to_graph` returns the original graph unchanged — e-graph rewrites don't yet affect emitted code. Graph-level passes do apply; that's where the example speedup comes from.
 - **RMS norm matcher has bugs** for some input shapes. Verification catches and drops them, but the pattern needs fixing.
-- **Layer norm matcher is a stub** that always returns False.
-- **Phase-2 kernel search is half-wired.** `KernelParamSearch` enumerates configs, but the kernel template doesn't yet plumb in `THREADGROUP`, `VW`, `UNROLL`. Natural extension: sweep user-supplied Metal kernel constants — not built.
+- **Phase-2 kernel search template is incomplete.** `KernelParamSearch` is wired and enumerates configs, but the kernel template doesn't yet plumb in `THREADGROUP`, `VW`, `UNROLL` as compile-time constants — so parameter variation has no effect until the template is parameterized.
 - **Tracer is fragile** with control flow, in-place updates, custom Metal kernels, or nested `mx.compile`. Right move is MLX's graph API once it stabilizes.
-- **egglog has no shape awareness** — single `Tensor` type, no shape or dtype. Shape-aware rewrites need a structured type encoding or separate inference pass.
-- **Missing rules:** elementwise fusion chains, `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization.
+- **egglog has no shape awareness** — single `Tensor` type, no shape or dtype. Shape-aware rewrites need a structured type encoding or separate inference pass. This also blocks ILP extraction (e-class internals not exposed by the Python bindings) and primitive-subst rules in the e-graph (handled as a graph pass instead).
+- **Missing rules:** `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization.
 - **TensorOps is a placeholder.** Real impl needs MPP `cooperative_tensor` (M5/A19+, WWDC 2025 #315). Current test env is `applegpu_g16s` (M4).
 
 ---
