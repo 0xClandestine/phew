@@ -115,6 +115,12 @@ phew verify baseline.py opt.py      # verify equivalence standalone
 uv pip install --no-config -e ".[dev]"
 ```
 
+To install `phew` globally so it's available in your terminal:
+
+```bash
+uv tool install --no-config -e .
+```
+
 Run the tests:
 
 ```bash
@@ -197,9 +203,31 @@ TensorOps detection uses architecture string parsing (`applegpu_g17+`). The curr
 
 ## Design references
 
-- [Mirage (OSDI 2025)](https://arxiv.org/abs/2405.05751) — μGraph IR, abstract-expression pruning, finite-field probabilistic equivalence
-- [Tensat (MLSys 2021)](https://arxiv.org/abs/2101.01332) — equality saturation for tensor programs, 30–700× faster search than TASO
-- [egg (POPL 2021)](https://egraphs-good.github.io/) — the e-graph engine underlying egglog
+```bibtex
+@inproceedings{mirage2025,
+  title     = {Mirage: A Multi-Level Superoptimizer for Tensor Programs},
+  author    = {Wu, Mengdi and Yao, Zhen and Chen, Jian and Liu, Zhijian},
+  booktitle = {19th USENIX Symposium on Operating Systems Design and Implementation (OSDI 2025)},
+  year      = {2025},
+  note      = {arXiv:2405.05751}
+}
+
+@inproceedings{tensat2021,
+  title     = {Equality Saturation for Tensor Graph Superoptimization},
+  author    = {Yang, Yichen and Phothilimthana, Phitchaya Mangpo and Hong, Yisu Remy and Murthy, Madhura and Moon, Shishir G. and Steinhardt, Jacob},
+  booktitle = {Proceedings of Machine Learning and Systems (MLSys 2021)},
+  year      = {2021},
+  note      = {arXiv:2101.01332}
+}
+
+@inproceedings{egg2021,
+  title     = {egg: Fast and Extensible Equality Saturation},
+  author    = {Willsey, Max and Nandi, Chandrakana and Wang, Yisu Remy and Flatt, Oliver and Tatlock, Zachary and Panchekha, Pavel},
+  booktitle = {Proceedings of the ACM on Programming Languages (POPL 2021)},
+  year      = {2021}
+}
+```
+
 - BALLS (Philogy) — R/W-dependency-tracked scheduling discipline
 - Rosenzweig, *Dissecting the Apple M1 GPU* — occupancy and register pressure model
 - Zakharyo 2025 — M5 TensorOps tile constraints
