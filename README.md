@@ -114,8 +114,7 @@ phew verify baseline.py opt.py      # verify equivalence standalone
 Named PHEW for a reason:
 
 - **E-graph round-trip is incomplete.** `_egglog_to_graph` returns the original graph unchanged — e-graph rewrites don't yet affect emitted code. Graph-level passes do apply; that's where the example speedup comes from.
-- **RMS norm matcher has bugs** for some input shapes. Verification catches and drops them, but the pattern needs fixing.
-- **Phase-2 kernel search template is incomplete.** `KernelParamSearch` is wired and enumerates configs, but the kernel template doesn't yet plumb in `THREADGROUP`, `VW`, `UNROLL` as compile-time constants — so parameter variation has no effect until the template is parameterized.
+- **Phase-2 template constants** (`VW`, `UNROLL`) only take effect when the kernel source explicitly references those names. Threadgroup size is varied unconditionally via the `threadgroup=` call param and always has effect.
 - **Tracer is fragile** with control flow, in-place updates, custom Metal kernels, or nested `mx.compile`. Right move is MLX's graph API once it stabilizes.
 - **egglog has no shape awareness** — single `Tensor` type, no shape or dtype. Shape-aware rewrites need a structured type encoding or separate inference pass. This also blocks ILP extraction (e-class internals not exposed by the Python bindings) and primitive-subst rules in the e-graph (handled as a graph pass instead).
 - **Missing rules:** `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization.
