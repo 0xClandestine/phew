@@ -9,6 +9,7 @@ All other rules (algebraic, fusion, layout, precision, quantization) operate
 inside the egglog e-graph via phew/egraph/rules_egglog.py.
 """
 
+from .algebraic import AlgebraicPass
 from .compile_boundaries import CompileBoundaryPass
 from .fusion import ElementwiseFusionPass
 from .graph_passes import run_all_passes
@@ -16,6 +17,7 @@ from .primitive_subst import PrimitiveSubstPass
 from .tensorops import TensorOpsPass
 
 __all__ = [
+    "AlgebraicPass",
     "PrimitiveSubstPass",
     "CompileBoundaryPass",
     "ElementwiseFusionPass",
