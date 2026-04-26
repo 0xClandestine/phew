@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Ruff lint + format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv pip install --system --no-config ruff
+      - name: Check formatting
+        run: ruff format --check phew/ tests/ examples/
+      - name: Lint
+        run: ruff check phew/ tests/ examples/
+
+  test:
+    name: Tests (macOS Apple Silicon)
+    # Tests that don't require MLX/Metal can run on any runner.
+    # Full Metal tests require a self-hosted Apple Silicon runner.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+      - name: Install phew
+        # mlx requires macOS 13.3+ on Apple Silicon; skip mlx install on Intel CI
+        run: |
+          uv pip install --system --no-config -e ".[dev]" \
+            --extra-index-url https://pypi.org/simple/ \
+            || uv pip install --system --no-config \
+               numpy scipy click rich egglog pytest pytest-benchmark
+      - name: Run tests
+        run: uv run --system --no-config python -m pytest tests/ -v --tb=short

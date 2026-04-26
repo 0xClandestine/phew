@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phew"
+version = "0.1.0"
+description = "Probably Hardly Ever Works — search-based superoptimizer for MLX/Metal"
+requires-python = ">=3.10"
+dependencies = [
+    "mlx>=0.24.0",
+    "numpy>=1.26.0",
+    "click>=8.1.0",
+    "scipy>=1.12.0",      # ILP extraction via scipy.optimize.milp
+    "egglog>=0.9.0",      # e-graph saturation
+    "rich>=13.0.0",       # CLI output
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-benchmark>=4.0.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+phew = "phew.cli.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["phew"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+.uv/
+
+# Testing
+.pytest_cache/
+.benchmarks/
+
+# Linting
+.ruff_cache/
+.mypy_cache/
+
+# Metal / GPU traces
+*.gputrace
+*.trace
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
+CLAUDE.md
