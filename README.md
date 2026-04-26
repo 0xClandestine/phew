@@ -42,10 +42,12 @@ Seven steps, all automatic:
 ## Install
 
 ```bash
-pip install phew-mlx     # or: uv pip install phew-mlx
+uv tool install phew-mlx
 ```
 
-Requires macOS 13.3+ on Apple Silicon. Dev install: `uv pip install -e ".[dev]"`.
+This installs `phew` as a globally available CLI command. Requires macOS 13.3+ on Apple Silicon.
+
+Dev install: `uv pip install -e ".[dev]"`.
 
 ## Usage
 
