@@ -31,6 +31,112 @@ from .ops import (
     Transpose,
 )
 
+# ---------------------------------------------------------------------------
+# Metal kernel tracing
+# ---------------------------------------------------------------------------
+
+# Set to the active Graph while trace_to_graph is running so wrappers can
+# record MetalKernel IR nodes without being explicitly passed the graph.
+_TRACING_GRAPH: "Graph | None" = None
+
+
+class _MetalKernelWrapper:
+    """Drop-in proxy for an mx.fast.metal_kernel callable.
+
+    Created at module-load time when the user module calls
+    ``mx.fast.metal_kernel(...)``.  During tracing (when ``_TRACING_GRAPH``
+    is set) and inputs contain ``_TracedArray`` objects, records a
+    ``MetalKernel`` + ``MetalKernelSelect`` subgraph into the graph instead
+    of executing the kernel.  Otherwise delegates to the real kernel.
+    """
+
+    def __init__(
+        self,
+        real_kernel,
+        name: str,
+        input_names: list,
+        output_names: list,
+        source: str,
+        header: str,
+    ) -> None:
+        self._real = real_kernel
+        self._name = name
+        self._input_names = list(input_names)
+        self._output_names = list(output_names)
+        self._source = source
+        self._header = header
+
+    def __call__(
+        self,
+        inputs,
+        output_shapes,
+        output_dtypes,
+        grid,
+        threadgroup,
+        template=None,
+        **kw,
+    ):
+        global _TRACING_GRAPH
+
+        template = template or []
+
+        if _TRACING_GRAPH is None or not any(isinstance(x, _TracedArray) for x in inputs):
+            return self._real(
+                inputs=inputs,
+                output_shapes=output_shapes,
+                output_dtypes=output_dtypes,
+                grid=grid,
+                threadgroup=threadgroup,
+                template=template,
+                **kw,
+            )
+
+        from .deps import MemDep
+        from .ops import MetalKernel, MetalKernelSelect
+
+        graph = _TRACING_GRAPH
+
+        inp_node_ids = [x._node.id for x in inputs if isinstance(x, _TracedArray)]
+        inp_shapes = [x._node.shape for x in inputs if isinstance(x, _TracedArray)]
+        out_dtypes_ir = [d if isinstance(d, Dtype) else Dtype.from_mlx(d) for d in output_dtypes]
+        out_shapes = [tuple(s) for s in output_shapes]
+        tg = threadgroup if isinstance(threadgroup, tuple) else (int(threadgroup), 1, 1)
+        g = grid if isinstance(grid, tuple) else (int(grid), 1, 1)
+
+        kernel_node = MetalKernel(
+            shape=out_shapes[0],
+            dtype=out_dtypes_ir[0],
+            inputs=inp_node_ids,
+            source=self._source,
+            header=self._header,
+            input_names=self._input_names,
+            output_names=self._output_names,
+            output_shapes=out_shapes,
+            output_dtypes=out_dtypes_ir,
+            input_shapes=inp_shapes,
+            threadgroup=tg,
+            grid=g,
+            template_params=list(template),
+            deps=MemDep.device_mem,
+        )
+        graph.add(kernel_node)
+
+        if len(out_shapes) == 1:
+            return [_TracedArray(kernel_node, graph)]
+
+        # Multi-output: one MetalKernelSelect per output.
+        results = []
+        for i, (shape, dtype) in enumerate(zip(out_shapes, out_dtypes_ir)):
+            sel = MetalKernelSelect(
+                shape=shape,
+                dtype=dtype,
+                inputs=[kernel_node.id],
+                output_idx=i,
+            )
+            graph.add(sel)
+            results.append(_TracedArray(sel, graph))
+        return results
+
 
 class _TracedArray:
     """Proxy that records MLX operations into a Graph."""
@@ -141,11 +247,13 @@ class _TracedArray:
         return _TracedArray(node, self._graph)
 
     def _reduce_method(self, op: str, axis=None, keepdims=False, **_) -> "_TracedArray":
-        axes = (
-            (axis,)
-            if isinstance(axis, int)
-            else (tuple(axis) if axis is not None else tuple(range(len(self._node.shape))))
-        )
+        ndim = len(self._node.shape)
+        if isinstance(axis, int):
+            axes = (axis % ndim,)
+        elif axis is not None:
+            axes = tuple(a % ndim for a in axis)
+        else:
+            axes = tuple(range(ndim))
         out_shape = _reduce_shape(self._node.shape, axes, bool(keepdims))
         node = Reduce(
             shape=out_shape,
@@ -312,11 +420,13 @@ class _TracingContext:
     def _reduce(self, x, op, axis, keepdims) -> _TracedArray:
         if not isinstance(x, _TracedArray):
             return x
-        axes = (
-            (axis,)
-            if isinstance(axis, int)
-            else (tuple(axis) if axis is not None else tuple(range(len(x.shape))))
-        )
+        ndim = len(x.shape)
+        if isinstance(axis, int):
+            axes = (axis % ndim,)
+        elif axis is not None:
+            axes = tuple(a % ndim for a in axis)
+        else:
+            axes = tuple(range(ndim))
         out_shape = _reduce_shape(x.shape, axes, keepdims)
         node = Reduce(
             shape=out_shape,
@@ -400,7 +510,13 @@ class _TracingContext:
         ndim = len(x.shape) + 1
         axis = axis % ndim
         new_shape = x.shape[:axis] + (1,) + x.shape[axis:]
-        node = Reshape(shape=new_shape, dtype=x.dtype, inputs=[x._node.id], new_shape=new_shape, input_shape=x.shape)
+        node = Reshape(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            new_shape=new_shape,
+            input_shape=x.shape,
+        )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
@@ -583,9 +699,12 @@ def trace_to_graph(
         _orig[name] = getattr(mx, name, None)
         setattr(mx, name, getattr(ctx, name))
 
+    global _TRACING_GRAPH
+    _TRACING_GRAPH = graph
     try:
         result = fn(*proxy_args, **proxy_kwargs)
     finally:
+        _TRACING_GRAPH = None
         for name, orig in _orig.items():
             if orig is not None:
                 setattr(mx, name, orig)

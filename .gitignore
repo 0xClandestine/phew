@@ -25,6 +25,9 @@ venv/
 *.gputrace
 *.trace
 
+# Generated PHEW output files
+examples/*_opt.py
+
 # Editor
 .vscode/
 .idea/

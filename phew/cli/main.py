@@ -28,11 +28,44 @@ console = Console()
 
 
 def _load_module(path: str):
-    """Load a Python file as a module and return it."""
+    """Load a Python file as a module and return it.
+
+    Patches ``mx.fast.metal_kernel`` before exec so that any
+    ``mx.fast.metal_kernel(...)`` calls at module level produce
+    ``_MetalKernelWrapper`` objects that PHEW's tracer can intercept.
+    """
+    from phew.ir.importer import _MetalKernelWrapper
+
+    try:
+        import mlx.core.fast as _mx_fast
+
+        _orig_mk = getattr(_mx_fast, "metal_kernel", None)
+    except ImportError:
+        _orig_mk = None
+
+    if _orig_mk is not None:
+
+        def _patched_mk(name, input_names, output_names, source, header="", **kw):
+            real = _orig_mk(
+                name=name,
+                input_names=input_names,
+                output_names=output_names,
+                source=source,
+                header=header,
+                **kw,
+            )
+            return _MetalKernelWrapper(real, name, input_names, output_names, source, header)
+
+        _mx_fast.metal_kernel = _patched_mk
+
     p = Path(path).resolve()
     spec = importlib.util.spec_from_file_location("_phew_target", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+
+    if _orig_mk is not None:
+        _mx_fast.metal_kernel = _orig_mk  # restore; wrappers remain in module globals
+
     return mod
 
 
@@ -100,7 +133,37 @@ def cli():
     type=click.Choice(["greedy", "ilp"]),
     help="E-graph extraction strategy",
 )
-def run(input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_iters, strategy):
+@click.option(
+    "--fusion",
+    is_flag=True,
+    default=False,
+    help="Enable Phase-2 elementwise fusion into Metal kernels",
+)
+@click.option(
+    "--diff",
+    is_flag=True,
+    default=False,
+    help="Print a unified diff of input vs optimized source to stdout",
+)
+@click.option(
+    "--diff-output",
+    default=None,
+    metavar="FILE",
+    help="Write the unified diff to FILE (implies --diff)",
+)
+def run(
+    input_file,
+    output,
+    trace,
+    allow_fp16,
+    allow_bf16,
+    allow_quant,
+    eqsat_iters,
+    strategy,
+    fusion,
+    diff,
+    diff_output,
+):
     """Optimize INPUT_FILE and emit faster equivalent code."""
     from phew import Optimizer
     from phew.verify import SubstitutionClass
@@ -128,6 +191,7 @@ def run(input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_it
         max_eqsat_iters=eqsat_iters,
         extraction_strategy=strategy,
         fn_name=getattr(mod, "fn_name", "optimized"),
+        enable_fusion=fusion,
     )
 
     console.print("[bold]Running PHEW optimizer...[/bold]")
@@ -135,10 +199,48 @@ def run(input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_it
 
     _print_result(result)
 
+    if diff or diff_output:
+        import difflib
+
+        original = Path(input_file).read_text().splitlines(keepends=True)
+        optimized = result.output_source.splitlines(keepends=True)
+        diff_text = "".join(
+            difflib.unified_diff(
+                original,
+                optimized,
+                fromfile=input_file,
+                tofile=output or input_file + " [optimized]",
+            )
+        )
+
+        if diff_output:
+            Path(diff_output).write_text(diff_text)
+            console.print(f"\n[green]Diff written to {diff_output}[/green]")
+
+        if diff:
+            if diff_text:
+                from rich.markup import escape
+
+                console.print("\n[bold]Diff:[/bold]")
+                for line in diff_text.splitlines():
+                    esc = escape(line)
+                    if line.startswith("+++") or line.startswith("---"):
+                        console.print(f"[bold]{esc}[/bold]")
+                    elif line.startswith("+"):
+                        console.print(f"[green]{esc}[/green]")
+                    elif line.startswith("-"):
+                        console.print(f"[red]{esc}[/red]")
+                    elif line.startswith("@@"):
+                        console.print(f"[cyan]{esc}[/cyan]")
+                    else:
+                        console.print(esc)
+            else:
+                console.print("\n[dim]No changes — optimized source is identical to input.[/dim]")
+
     if output:
         Path(output).write_text(result.output_source)
         console.print(f"\n[green]Optimized code written to {output}[/green]")
-    else:
+    elif not diff and not diff_output:
         console.print("\n[bold]Optimized source:[/bold]")
         console.print(result.output_source)
 
