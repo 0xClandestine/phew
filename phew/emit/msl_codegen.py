@@ -212,6 +212,10 @@ class SubgraphMSLCodegen:
                     )
                 elif op == "silu":
                     lines.append(f"{t} {vname} = {ins[0]} / (1.0f + metal::exp(-{ins[0]}));")
+                elif op == "cos":
+                    lines.append(f"{t} {vname} = metal::cos({ins[0]});")
+                elif op == "sin":
+                    lines.append(f"{t} {vname} = metal::sin({ins[0]});")
                 elif op == "square":
                     lines.append(f"{t} {vname} = {ins[0]} * {ins[0]};")
                 elif op == "maximum" and len(ins) == 2:

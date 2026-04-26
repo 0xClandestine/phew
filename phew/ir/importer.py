@@ -620,6 +620,63 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+
+    def cos(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            import math
+            return math.cos(x)
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="cos")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def sin(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            import math
+            return math.sin(x)
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="sin")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def stack(self, arrays, axis=0, **_):
+        traced = [a for a in arrays if isinstance(a, _TracedArray)]
+        if not traced:
+            import mlx.core as _mx
+            return _mx.stack(arrays, axis=axis)
+        ref = traced[0]
+        new_shape = ref.shape[:axis] + (len(arrays),) + ref.shape[axis:]
+        node = Elementwise(
+            shape=new_shape,
+            dtype=ref.dtype,
+            inputs=[a._node.id for a in arrays if isinstance(a, _TracedArray)],
+            op="stack",
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def argpartition(self, x, kth, axis=-1, **_):
+        if not isinstance(x, _TracedArray):
+            import mlx.core as _mx
+            return _mx.argpartition(x, kth, axis=axis)
+        # Result shape same as input, dtype int32
+        from phew.ir.dtype import Dtype as _Dtype
+        node = Elementwise(
+            shape=x.shape, dtype=_Dtype.int32, inputs=[x._node.id], op="argpartition"
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def take_along_axis(self, x, indices, axis, **_):
+        if not isinstance(x, _TracedArray):
+            import mlx.core as _mx
+            return _mx.take_along_axis(x, indices, axis)
+        idx = indices if isinstance(indices, _TracedArray) else indices
+        idx_node_id = idx._node.id if isinstance(idx, _TracedArray) else x._node.id
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id, idx_node_id], op="take_along_axis"
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def eval(self, *args, **_):
         pass  # no-op in tracing
 
@@ -693,6 +750,11 @@ def trace_to_graph(
         "array",
         "zeros",
         "ones",
+        "cos",
+        "sin",
+        "stack",
+        "argpartition",
+        "take_along_axis",
         "eval",
         "synchronize",
     ]:
