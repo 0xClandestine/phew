@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from phew.ir import Graph
-    from phew.ir.node import Node, NodeId
+    from phew.ir.node import Node
 
 # Minimum number of Elementwise (non-Constant, non-Cast) nodes to fuse.
 MIN_CHAIN_ELEMS = 3
@@ -114,7 +114,7 @@ class ElementwiseFusionPass:
 
     def _find_chains(self, graph: "Graph") -> list[list["Node"]]:
         """Return a list of fuseable chains, longest first."""
-        from phew.ir.ops import Constant, Elementwise
+        from phew.ir.ops import Elementwise
 
         topo = graph.topo_order()
         in_chain: set[int] = set()
@@ -159,7 +159,11 @@ class ElementwiseFusionPass:
 
             # Extend downstream through fuseable consumers
             for succ in graph.successors(node.id):
-                if succ.id not in subgraph_ids and _is_fuseable(succ) and succ.id not in already_claimed:
+                if (
+                    succ.id not in subgraph_ids
+                    and _is_fuseable(succ)
+                    and succ.id not in already_claimed
+                ):
                     queue.append(succ)
 
             # Extend upstream through fuseable producers
@@ -167,7 +171,11 @@ class ElementwiseFusionPass:
                 if inp_id not in graph:
                     continue
                 pred = graph[inp_id]
-                if pred.id not in subgraph_ids and _is_fuseable(pred) and pred.id not in already_claimed:
+                if (
+                    pred.id not in subgraph_ids
+                    and _is_fuseable(pred)
+                    and pred.id not in already_claimed
+                ):
                     queue.append(pred)
 
         # Return in stable topological order
@@ -180,9 +188,8 @@ class ElementwiseFusionPass:
     def _fuse_chain(self, chain: "list[Node]", graph: "Graph") -> bool:
         """Replace a chain with a MetalKernel node. Return True on success."""
         from phew.emit.msl_codegen import SubgraphMSLCodegen
-        from phew.ir.ops import Constant, MetalKernel
-        from phew.ir.dtype import Dtype
         from phew.ir.deps import MemDep
+        from phew.ir.ops import Constant, MetalKernel
 
         chain_ids = {n.id for n in chain}
 
@@ -209,9 +216,7 @@ class ElementwiseFusionPass:
             if isinstance(node, Constant):
                 continue
             is_graph_out = node.id in graph_output_ids
-            has_ext_consumer = any(
-                s.id not in chain_ids for s in graph.successors(node.id)
-            )
+            has_ext_consumer = any(s.id not in chain_ids for s in graph.successors(node.id))
             if (is_graph_out or has_ext_consumer) and node.id not in ext_output_ids:
                 ext_outputs.append(node)
                 ext_output_ids.add(node.id)
@@ -254,6 +259,7 @@ class ElementwiseFusionPass:
         numel = ext_outputs[0].numel
         tg = min(256, numel)
         import math
+
         grid_x = math.ceil(numel / tg) * tg
 
         kernel_node = MetalKernel(

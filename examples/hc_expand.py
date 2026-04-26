@@ -37,8 +37,6 @@ def input_factory(size_label: str, seed: int):
     B, L = _SIZES[size_label]
     post = mx.array(rng.random((B, L, HC)).astype(np.float32))
     block_out = mx.array(rng.standard_normal((B, L, HIDDEN)).astype(np.float16))
-    comb = mx.array(
-        (rng.random((B, L, HC, HC)) / HC).astype(np.float32)
-    )  # doubly-stochastic
+    comb = mx.array((rng.random((B, L, HC, HC)) / HC).astype(np.float32))  # doubly-stochastic
     residual = mx.array(rng.standard_normal((B, L, HC, HIDDEN)).astype(np.float16))
     return [post, block_out, comb, residual], {}

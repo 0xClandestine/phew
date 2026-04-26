@@ -106,7 +106,9 @@ def cli():
     default=False,
     help="Enable Phase-2 elementwise fusion into Metal kernels",
 )
-def run(input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_iters, strategy, fusion):
+def run(
+    input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_iters, strategy, fusion
+):
     """Optimize INPUT_FILE and emit faster equivalent code."""
     from phew import Optimizer
     from phew.verify import SubstitutionClass

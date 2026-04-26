@@ -404,7 +404,13 @@ class _TracingContext:
         ndim = len(x.shape) + 1
         axis = axis % ndim
         new_shape = x.shape[:axis] + (1,) + x.shape[axis:]
-        node = Reshape(shape=new_shape, dtype=x.dtype, inputs=[x._node.id], new_shape=new_shape, input_shape=x.shape)
+        node = Reshape(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            new_shape=new_shape,
+            input_shape=x.shape,
+        )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 

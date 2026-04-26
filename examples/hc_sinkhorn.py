@@ -29,10 +29,9 @@ def fn(mixes, scale, base, eps_arr):
 
     pre = mx.sigmoid(mixes[..., :HC] * pre_scale + base[:HC]) + eps
     post = 2 * mx.sigmoid(mixes[..., HC : 2 * HC] * post_scale + base[HC : 2 * HC])
-    comb = (
-        mixes[..., 2 * HC :].reshape(*mixes.shape[:-1], HC, HC) * comb_scale
-        + base[2 * HC :].reshape(HC, HC)
-    )
+    comb = mixes[..., 2 * HC :].reshape(*mixes.shape[:-1], HC, HC) * comb_scale + base[
+        2 * HC :
+    ].reshape(HC, HC)
     comb = mx.softmax(comb, axis=-1, precise=True) + eps
     comb = comb / (comb.sum(axis=-2, keepdims=True) + eps)
     for _ in range(max(ITERS - 1, 0)):

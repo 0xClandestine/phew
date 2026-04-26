@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from phew.ir import Graph
     from phew.ir.node import Node
 
 # Dtype → MSL type name
@@ -138,7 +137,7 @@ class SubgraphMSLCodegen:
         lines: list[str] = []
 
         # Bounds check — use numel of first output
-        target_numel = external_outputs[0].numel if external_outputs else 1
+        external_outputs[0].numel if external_outputs else 1
 
         # No bounds check — MLX dispatches exactly numel threads via
         # dispatchThreads, so thread_position_in_grid is always in range.
@@ -216,8 +215,7 @@ class SubgraphMSLCodegen:
                     lines.append(f"{t} {vname} = metal::min({ins[0]}, {ins[1]});")
                 elif op == "logaddexp" and len(ins) == 2:
                     lines.append(
-                        f"{t} {vname} = metal::log("
-                        f"metal::exp({ins[0]}) + metal::exp({ins[1]}));"
+                        f"{t} {vname} = metal::log(metal::exp({ins[0]}) + metal::exp({ins[1]}));"
                     )
                 else:
                     lines.append(f"// unhandled op: {op}")

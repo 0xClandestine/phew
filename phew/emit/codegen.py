@@ -34,15 +34,13 @@ class MLXCodegen:
 
         # Detect whether any output node is a Compile node — if so, wrap
         # the whole function with @mx.compile rather than emitting a broken lambda.
-        has_compile = any(
-            isinstance(graph[o], Compile) for o in graph.outputs if o in graph._nodes
-        )
+        has_compile = any(isinstance(graph[o], Compile) for o in graph.outputs if o in graph._nodes)
 
         inputs = [n for n in graph.topo_order() if isinstance(n, Input)]
         args = ", ".join(n.name or f"x{i}" for i, n in enumerate(inputs))
 
         if has_compile:
-            lines.append(f"@mx.compile")
+            lines.append("@mx.compile")
 
         lines.append(f"def {fn_name}({args}):")
 
@@ -162,11 +160,15 @@ class MLXCodegen:
                 vname = fresh()
                 in_sh = node.input_shape
                 out_sh = node.new_shape
-                # Detect expand_dims: output has one more dim than input AND one new dim is exactly 1
+                # Detect expand_dims: one more output dim than input, new dim is exactly 1
                 expand_axis = None
                 if in_sh and len(out_sh) == len(in_sh) + 1:
                     for i in range(len(out_sh)):
-                        if out_sh[i] == 1 and out_sh[:i] == in_sh[:i] and out_sh[i + 1 :] == in_sh[i:]:
+                        if (
+                            out_sh[i] == 1
+                            and out_sh[:i] == in_sh[:i]
+                            and out_sh[i + 1 :] == in_sh[i:]
+                        ):
                             expand_axis = i
                             break
                 if expand_axis is not None:
@@ -196,7 +198,9 @@ class MLXCodegen:
                             lines.append(f"{vname} = mx.reshape({ins[0]}, [{shape_parts}, -1])")
                         else:
                             static_suffix = ", ".join(str(s) for s in suffix_out)
-                            lines.append(f"{vname} = mx.reshape({ins[0]}, [{shape_parts}, {static_suffix}])")
+                            lines.append(
+                                f"{vname} = mx.reshape({ins[0]}, [{shape_parts}, {static_suffix}])"
+                            )
                     else:
                         lines.append(f"{vname} = mx.reshape({ins[0]}, {list(node.new_shape)})")
 

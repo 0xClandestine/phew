@@ -117,8 +117,16 @@ class EquivalenceChecker:
                         mx.eval(out_baseline, out_candidate)
 
                         # Support single array or tuple/list of arrays
-                        b_outs = list(out_baseline) if isinstance(out_baseline, (list, tuple)) else [out_baseline]
-                        c_outs = list(out_candidate) if isinstance(out_candidate, (list, tuple)) else [out_candidate]
+                        b_outs = (
+                            list(out_baseline)
+                            if isinstance(out_baseline, (list, tuple))
+                            else [out_baseline]
+                        )
+                        c_outs = (
+                            list(out_candidate)
+                            if isinstance(out_candidate, (list, tuple))
+                            else [out_candidate]
+                        )
 
                         ok = True
                         max_diff = 0.0
@@ -127,7 +135,11 @@ class EquivalenceChecker:
                             c_np = np.array(c_arr)
                             if not self._allclose(b_np, c_np):
                                 ok = False
-                                diff = float(np.max(np.abs(b_np.astype(np.float64) - c_np.astype(np.float64))))
+                                diff = float(
+                                    np.max(
+                                        np.abs(b_np.astype(np.float64) - c_np.astype(np.float64))
+                                    )
+                                )
                                 max_diff = max(max_diff, diff)
 
                         if not ok:
