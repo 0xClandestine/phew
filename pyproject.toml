@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "phew"
-version = "0.1.0"
+name = "phew-mlx"
+version = "0.1.1"
 description = "Probably Hardly Ever Works — search-based superoptimizer for MLX/Metal"
 requires-python = ">=3.10"
 dependencies = [

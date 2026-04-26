@@ -111,19 +111,17 @@ phew verify baseline.py opt.py      # verify equivalence standalone
 ## Install
 
 ```bash
-# Requires macOS 13.3+ on Apple Silicon, Python 3.12+
+pip install phew-mlx
+# or
+uv pip install phew-mlx
+```
+
+This installs the `phew` CLI globally. Requires macOS 13.3+ on Apple Silicon.
+
+**For development:**
+
+```bash
 uv pip install --no-config -e ".[dev]"
-```
-
-To install `phew` globally so it's available in your terminal:
-
-```bash
-uv tool install --no-config -e .
-```
-
-Run the tests:
-
-```bash
 uv run --no-config pytest tests/ -v
 ```
 
