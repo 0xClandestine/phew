@@ -16,11 +16,11 @@ jobs:
         with:
           version: "latest"
       - name: Install dependencies
-        run: uv pip install --system --no-config ruff
+        run: uv tool install --no-config ruff
       - name: Check formatting
-        run: ruff format --check phew/ tests/ examples/
+        run: uvx --no-config ruff format --check phew/ tests/ examples/
       - name: Lint
-        run: ruff check phew/ tests/ examples/
+        run: uvx --no-config ruff check phew/ tests/ examples/
 
   test:
     name: Tests (macOS Apple Silicon)
@@ -37,9 +37,10 @@ jobs:
       - name: Install phew
         # mlx requires macOS 13.3+ on Apple Silicon; skip mlx install on Intel CI
         run: |
-          uv pip install --system --no-config -e ".[dev]" \
+          uv venv --no-config -p 3.12
+          uv pip install --no-config -e ".[dev]" \
             --extra-index-url https://pypi.org/simple/ \
-            || uv pip install --system --no-config \
+            || uv pip install --no-config \
                numpy scipy click rich egglog pytest pytest-benchmark
       - name: Run tests
-        run: uv run --system --no-config python -m pytest tests/ -v --tb=short
+        run: uv run --no-config python -m pytest tests/ -v --tb=short
