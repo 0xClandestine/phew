@@ -90,7 +90,11 @@ class MLXCodegen:
             if isinstance(node, Constant):
                 vname = fresh("c")
                 name_map[node.id] = vname
-                lines.append(f"{vname} = mx.array({node.value!r})")
+                dtype_str = node.dtype.to_mlx() if node.dtype is not None else None
+                if dtype_str and dtype_str != "float32":
+                    lines.append(f"{vname} = mx.array({node.value!r}, dtype=mx.{dtype_str})")
+                else:
+                    lines.append(f"{vname} = mx.array({node.value!r})")
                 continue
 
             ins = [name_map.get(i, f"_missing_{i}") for i in node.inputs]

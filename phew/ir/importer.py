@@ -203,7 +203,7 @@ class _TracedArray:
 
     def __neg__(self):
         node = Elementwise(
-            shape=self._node.shape, dtype=self._node.dtype, inputs=[self._node.id], op="neg"
+            shape=self._node.shape, dtype=self._node.dtype, inputs=[self._node.id], op="negative"
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1046,7 +1046,7 @@ class _TracingContext:
     def negative(self, x, **_):
         if not isinstance(x, _TracedArray):
             return -x
-        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="neg")
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="negative")
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
