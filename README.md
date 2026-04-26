@@ -42,10 +42,12 @@ Seven steps, all automatic:
 ## Install
 
 ```bash
-uv tool install phew-mlx
+uv tool install phew-mlx          # install globally
+uv tool upgrade phew-mlx          # upgrade to latest
+uv tool uninstall phew-mlx        # remove
 ```
 
-This installs `phew` as a globally available CLI command. Requires macOS 13.3+ on Apple Silicon.
+Installs `phew` as a globally available CLI command. If the active virtualenv shadows it, run `deactivate` first. Requires macOS 13.3+ on Apple Silicon.
 
 Dev install: `uv pip install -e ".[dev]"`.
 
