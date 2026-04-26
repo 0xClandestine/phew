@@ -337,27 +337,46 @@ class MLXCodegen:
             shapes_expr = f"[{matching_inp}.shape]" if matching_inp else str(node.output_shapes)
             grid_expr = f"({matching_inp}.size, 1, 1)" if matching_inp else "(1, 1, 1)"
         else:
-            # Multi-output: detect the dynamic batch dimension from grid[0].
-            # If grid[0] equals the first dim of the first output, and some input
-            # also has that as its first dim, use {inp}.shape[0] for dynamism.
+            # Multi-output: find an input where product(shape[:-1]) == grid[0].
+            # This covers both (B, MIX) -> grid=(B,1,1) and (B,L,MIX) -> grid=(B*L,1,1).
             batch_val = node.grid[0] if node.grid else 0
             batch_inp = None
+            n_batch_dims = 0
+
             if node.input_shapes and batch_val:
                 for var_name, in_sh in zip(ins, node.input_shapes):
-                    if in_sh and in_sh[0] == batch_val:
+                    if len(in_sh) < 2:
+                        continue
+                    prod = 1
+                    for s in in_sh[:-1]:
+                        prod *= s
+                    if prod == batch_val:
                         batch_inp = var_name
+                        n_batch_dims = len(in_sh) - 1
                         break
 
-            if batch_inp is not None and node.output_shapes[0] and node.output_shapes[0][0] == batch_val:
-                bvar = f"_B_{node.id}"
-                lines.append(f"{bvar} = {batch_inp}.shape[0]")
+            if batch_inp is not None:
+                # Emit one shape variable per dynamic (non-last) input dim.
+                dim_vars = []
+                for i in range(n_batch_dims):
+                    dvar = f"_D{i}_{node.id}"
+                    lines.append(f"{dvar} = {batch_inp}.shape[{i}]")
+                    dim_vars.append(dvar)
 
-                def _shape_expr(sh):
-                    dims = [bvar if d == batch_val else str(d) for d in sh]
+                if n_batch_dims == 1:
+                    grid_expr = f"({dim_vars[0]}, 1, 1)"
+                else:
+                    grid_expr = f"({' * '.join(dim_vars)}, 1, 1)"
+
+                # Output shapes: first n_batch_dims are dynamic, rest are static.
+                def _out_shape_expr(out_sh):
+                    dims = [
+                        dim_vars[i] if i < n_batch_dims else str(d)
+                        for i, d in enumerate(out_sh)
+                    ]
                     return "(" + ", ".join(dims) + ("," if len(dims) == 1 else "") + ")"
 
-                shapes_expr = "[" + ", ".join(_shape_expr(sh) for sh in node.output_shapes) + "]"
-                grid_expr = f"({bvar}, 1, 1)"
+                shapes_expr = "[" + ", ".join(_out_shape_expr(sh) for sh in node.output_shapes) + "]"
             else:
                 shapes_expr = str(node.output_shapes)
                 grid_expr = str(node.grid) if node.grid else "(1, 1, 1)"
