@@ -131,6 +131,14 @@ class EquivalenceChecker:
                         ok = True
                         max_diff = 0.0
                         for b_arr, c_arr in zip(b_outs, c_outs):
+                            # Cast bf16 to float32 before numpy conversion —
+                            # numpy has no bf16 dtype and the buffer protocol fails.
+                            import mlx.core as _mx
+
+                            if b_arr.dtype == _mx.bfloat16:
+                                b_arr = b_arr.astype(_mx.float32)
+                            if c_arr.dtype == _mx.bfloat16:
+                                c_arr = c_arr.astype(_mx.float32)
                             b_np = np.array(b_arr)
                             c_np = np.array(c_arr)
                             if not self._allclose(b_np, c_np):

@@ -212,6 +212,26 @@ class SubgraphMSLCodegen:
                     )
                 elif op == "silu":
                     lines.append(f"{t} {vname} = {ins[0]} / (1.0f + metal::exp(-{ins[0]}));")
+                elif op == "cos":
+                    lines.append(f"{t} {vname} = metal::cos({ins[0]});")
+                elif op == "sin":
+                    lines.append(f"{t} {vname} = metal::sin({ins[0]});")
+                elif op == "arctan":
+                    lines.append(f"{t} {vname} = metal::atan({ins[0]});")
+                elif op == "arcsin":
+                    lines.append(f"{t} {vname} = metal::asin({ins[0]});")
+                elif op == "arccos":
+                    lines.append(f"{t} {vname} = metal::acos({ins[0]});")
+                elif op == "arctanh":
+                    lines.append(f"{t} {vname} = metal::atanh({ins[0]});")
+                elif op == "arcsinh":
+                    lines.append(f"{t} {vname} = metal::asinh({ins[0]});")
+                elif op == "arccosh":
+                    lines.append(f"{t} {vname} = metal::acosh({ins[0]});")
+                elif op == "degrees":
+                    lines.append(f"{t} {vname} = {ins[0]} * 57.29577951308232f;")
+                elif op == "radians":
+                    lines.append(f"{t} {vname} = {ins[0]} * 0.017453292519943295f;")
                 elif op == "square":
                     lines.append(f"{t} {vname} = {ins[0]} * {ins[0]};")
                 elif op == "maximum" and len(ins) == 2:
@@ -222,6 +242,64 @@ class SubgraphMSLCodegen:
                     lines.append(
                         f"{t} {vname} = metal::log(metal::exp({ins[0]}) + metal::exp({ins[1]}));"
                     )
+                elif op == "ceil":
+                    lines.append(f"{t} {vname} = metal::ceil({ins[0]});")
+                elif op == "floor":
+                    lines.append(f"{t} {vname} = metal::floor({ins[0]});")
+                elif op == "round":
+                    lines.append(f"{t} {vname} = metal::round({ins[0]});")
+                elif op == "sign":
+                    lines.append(f"{t} {vname} = ({t})(({ins[0]} > ({t})0) - ({ins[0]} < ({t})0));")
+                elif op == "reciprocal":
+                    lines.append(f"{t} {vname} = 1.0f / {ins[0]};")
+                elif op == "logical_not":
+                    lines.append(f"{t} {vname} = !{ins[0]};")
+                elif op == "erf":
+                    lines.append(f"{t} {vname} = metal::erf({ins[0]});")
+                elif op == "erfinv":
+                    lines.append(f"{t} {vname} = metal::erfinv({ins[0]});")
+                elif op == "expm1":
+                    lines.append(f"{t} {vname} = metal::exp({ins[0]}) - 1.0f;")
+                elif op == "log1p":
+                    lines.append(f"{t} {vname} = metal::log(1.0f + {ins[0]});")
+                elif op == "log2":
+                    lines.append(f"{t} {vname} = metal::log2({ins[0]});")
+                elif op == "log10":
+                    lines.append(f"{t} {vname} = metal::log10({ins[0]});")
+                elif op == "cosh":
+                    lines.append(f"{t} {vname} = metal::cosh({ins[0]});")
+                elif op == "sinh":
+                    lines.append(f"{t} {vname} = metal::sinh({ins[0]});")
+                elif op == "tan":
+                    lines.append(f"{t} {vname} = metal::tan({ins[0]});")
+                elif op == "floor_divide":
+                    lines.append(
+                        f"{t} {vname} = ({t})metal::floor((float){ins[0]} / (float){ins[1]});"
+                    )
+                elif op == "remainder":
+                    lines.append(f"{t} {vname} = metal::fmod({ins[0]}, {ins[1]});")
+                elif op == "power":
+                    lines.append(f"{t} {vname} = metal::pow({ins[0]}, {ins[1]});")
+                elif op == "eq":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} == {ins[1]});")
+                elif op == "ne":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} != {ins[1]});")
+                elif op == "gt":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} > {ins[1]});")
+                elif op == "ge":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} >= {ins[1]});")
+                elif op == "lt":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} < {ins[1]});")
+                elif op == "le":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} <= {ins[1]});")
+                elif op == "logical_and":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} && {ins[1]});")
+                elif op == "logical_or":
+                    lines.append(f"{t} {vname} = ({t})({ins[0]} || {ins[1]});")
+                elif op == "arctan2":
+                    lines.append(f"{t} {vname} = metal::atan2({ins[0]}, {ins[1]});")
+                elif op == "where" and len(ins) == 3:
+                    lines.append(f"{t} {vname} = {ins[0]} ? {ins[1]} : {ins[2]};")
                 else:
                     lines.append(f"// unhandled op: {op}")
                     lines.append(f"{t} {vname} = {ins[0] if ins else '0'};")

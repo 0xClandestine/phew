@@ -163,7 +163,14 @@ class KernelParamSearch:
                         )
 
     def _build_kernel_fn(self, node: "MetalKernel", cand: KernelCandidate) -> Callable:
-        """Build a callable that runs the kernel with the given parameters."""
+        """Build a callable that runs the kernel with the given parameters.
+
+        Threadgroup size is varied via the ``threadgroup=`` call parameter,
+        which always takes effect.  VW and UNROLL are injected as MSL template
+        constants only when the kernel source actually references those names —
+        otherwise they compile away silently and the search result would be
+        meaningless.
+        """
         import mlx.core as mx
 
         source = node.source or cand.source
@@ -173,7 +180,8 @@ class KernelParamSearch:
         output_shapes = node.output_shapes
         output_dtypes = node.output_dtypes
 
-        template = list(cand.template_params)
+        # Only pass template constants that the source actually references.
+        template = [(k, v) for k, v in cand.template_params if k in source]
         tg = cand.threadgroup
 
         # Import here to avoid issues when MLX is not installed

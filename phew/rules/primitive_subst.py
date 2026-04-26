@@ -31,81 +31,78 @@ class PrimitiveSubstPass:
         changed = False
         changed |= self._match_rms_norm(graph)
         changed |= self._match_layer_norm(graph)
+        changed |= self._match_rope(graph)
         changed |= self._match_sdpa(graph)
         return changed
 
     # ------------------------------------------------------------------
-    # RMS norm: x / sqrt(mean(x^2, keepdims=True) + eps) * weight
+    # RMS norm — two structural forms:
+    #   Form A (div+sqrt):  mul( div(x, sqrt(add(mean(x²), eps))), weight )
+    #   Form B (mul+rsqrt): mul( mul(x, rsqrt(add(mean(x²), eps))), weight )
     # ------------------------------------------------------------------
 
     def _match_rms_norm(self, graph: "Graph") -> bool:
-        from phew.ir import (
-            Elementwise,
-            FastRMSNorm,
-            Reduce,
-        )
+        from phew.ir import Elementwise, FastRMSNorm, Reduce
+
+        def _find_mean_add_chain(inv_node):
+            """Check inv_node is sqrt/rsqrt(add(mean(...), eps)).
+            Return the add_node predecessor or None."""
+            inv_preds = graph.predecessors(inv_node.id)
+            if not inv_preds:
+                return None
+            add_node = inv_preds[0]
+            if not (isinstance(add_node, Elementwise) and add_node.op == "add"):
+                return None
+            add_preds = graph.predecessors(add_node.id)
+            has_mean = any(isinstance(p, Reduce) and p.op == "mean" for p in add_preds)
+            return add_node if has_mean else None
 
         changed = False
         for node in list(graph.topo_order()):
-            # Look for final Elementwise mul that could be the scale step
             if not isinstance(node, Elementwise) or node.op not in ("mul", "multiply"):
                 continue
-            # Pattern: mul(div_or_scale, weight)
-            # A full pattern-match is shape-dependent; we use a conservative
-            # structural check here. The verifier will reject false positives.
             preds = graph.predecessors(node.id)
             if len(preds) < 2:
                 continue
 
-            # Check if one input is a plain weight (no computational preds)
-            div_node = None
-            for pred in preds:
+            x_node = None
+            weight_node = None
+
+            for i, pred in enumerate(preds):
+                other = preds[1 - i]
+
+                # Form A: div(x, sqrt(add(mean(x²), eps)))
                 if isinstance(pred, Elementwise) and pred.op in ("div", "divide"):
-                    div_node = pred
-                    break
-            if div_node is None:
-                continue
+                    div_preds = graph.predecessors(pred.id)
+                    if len(div_preds) < 2:
+                        continue
+                    sqrt_n = next(
+                        (p for p in div_preds if isinstance(p, Elementwise) and p.op == "sqrt"),
+                        None,
+                    )
+                    if sqrt_n is not None and _find_mean_add_chain(sqrt_n) is not None:
+                        # x is the non-sqrt input to div
+                        x_node = next(p for p in div_preds if p.id != sqrt_n.id)
+                        weight_node = other
+                        break
 
-            # Check div denominator is a sqrt+reduce chain
-            div_preds = graph.predecessors(div_node.id)
-            if len(div_preds) < 2:
-                continue
+                # Form B: mul(x, rsqrt(add(mean(x²), eps)))
+                elif isinstance(pred, Elementwise) and pred.op in ("mul", "multiply"):
+                    inner_preds = graph.predecessors(pred.id)
+                    if len(inner_preds) < 2:
+                        continue
+                    rsqrt_n = next(
+                        (p for p in inner_preds if isinstance(p, Elementwise) and p.op == "rsqrt"),
+                        None,
+                    )
+                    if rsqrt_n is not None and _find_mean_add_chain(rsqrt_n) is not None:
+                        # x is the non-rsqrt input to the inner mul
+                        x_node = next(p for p in inner_preds if p.id != rsqrt_n.id)
+                        weight_node = other
+                        break
 
-            sqrt_node = None
-            for p in div_preds:
-                if isinstance(p, Elementwise) and p.op in ("sqrt",):
-                    sqrt_node = p
-                    break
-            if sqrt_node is None:
+            if x_node is None or weight_node is None:
                 continue
-
-            sqrt_preds = graph.predecessors(sqrt_node.id)
-            if not sqrt_preds:
-                continue
-            add_node = sqrt_preds[0]
-            if not (isinstance(add_node, Elementwise) and add_node.op in ("add",)):
-                continue
-
-            add_preds = graph.predecessors(add_node.id)
-            reduce_node = None
-            for p in add_preds:
-                if isinstance(p, Reduce) and p.op == "mean":
-                    reduce_node = p
-                    break
-            if reduce_node is None:
-                continue
-
-            # Pattern matched — find the original input tensor
-            x_preds = graph.predecessors(reduce_node.id)
-            if not x_preds:
-                continue
-            x_node = x_preds[0]
-            # weight is the non-div predecessor of the final mul
-            weight_node = next((p for p in preds if p.id != div_node.id), None)
-            if weight_node is None:
-                continue
-
-            # Replace with FastRMSNorm
 
             new_node = FastRMSNorm(
                 shape=node.shape,
@@ -122,9 +119,167 @@ class PrimitiveSubstPass:
     # ------------------------------------------------------------------
 
     def _match_layer_norm(self, graph: "Graph") -> bool:
-        # Similar structural pattern; full match deferred to a more
-        # expressive pattern DSL in a future milestone.
-        return False
+        """Match (x - mean(x)) / sqrt(var(x) + eps) * weight + bias → FastLayerNorm."""
+        from phew.ir import Elementwise, FastLayerNorm, Reduce
+
+        changed = False
+        for node in list(graph.topo_order()):
+            # Top-level: add(scaled_norm, bias)
+            if not isinstance(node, Elementwise) or node.op not in ("add",):
+                continue
+            preds = graph.predecessors(node.id)
+            if len(preds) < 2:
+                continue
+
+            # One pred is mul(normalized, weight); the other is bias
+            mul_node = next(
+                (p for p in preds if isinstance(p, Elementwise) and p.op in ("mul", "multiply")),
+                None,
+            )
+            if mul_node is None:
+                continue
+            bias_node = next((p for p in preds if p.id != mul_node.id), None)
+
+            mul_preds = graph.predecessors(mul_node.id)
+            if len(mul_preds) < 2:
+                continue
+
+            # One pred is div(sub_x, std); the other is weight
+            div_node = next(
+                (p for p in mul_preds if isinstance(p, Elementwise) and p.op in ("div", "divide")),
+                None,
+            )
+            if div_node is None:
+                continue
+            weight_node = next((p for p in mul_preds if p.id != div_node.id), None)
+
+            div_preds = graph.predecessors(div_node.id)
+            if len(div_preds) < 2:
+                continue
+
+            # Numerator: sub(x, mean(x)); denominator: sqrt(var(x) + eps)
+            sub_node = next(
+                (
+                    p
+                    for p in div_preds
+                    if isinstance(p, Elementwise) and p.op in ("sub", "subtract")
+                ),
+                None,
+            )
+            sqrt_node = next(
+                (p for p in div_preds if isinstance(p, Elementwise) and p.op == "sqrt"),
+                None,
+            )
+            if sub_node is None or sqrt_node is None:
+                continue
+
+            # sqrt(add(reduce_var, eps))
+            sqrt_preds = graph.predecessors(sqrt_node.id)
+            if not sqrt_preds:
+                continue
+            var_add_node = sqrt_preds[0]
+            if not (isinstance(var_add_node, Elementwise) and var_add_node.op == "add"):
+                continue
+            var_add_preds = graph.predecessors(var_add_node.id)
+            var_node = next(
+                (p for p in var_add_preds if isinstance(p, Reduce) and p.op in ("var", "variance")),
+                None,
+            )
+            if var_node is None:
+                continue
+
+            # x from sub(x, mean_x)
+            sub_preds = graph.predecessors(sub_node.id)
+            if not sub_preds:
+                continue
+            x_node = sub_preds[0]
+
+            if weight_node is None or bias_node is None:
+                continue
+
+            new_node = FastLayerNorm(
+                shape=node.shape,
+                dtype=node.dtype,
+                inputs=[x_node.id, weight_node.id, bias_node.id],
+            )
+            graph.replace(node.id, new_node)
+            changed = True
+
+        return changed
+
+    # ------------------------------------------------------------------
+    # Rotary position embedding
+    # ------------------------------------------------------------------
+
+    def _match_rope(self, graph: "Graph") -> bool:
+        """Match rotary embedding pattern → FastRoPE.
+
+        Structural signature: Concat node whose predecessor subtrees both
+        contain cos and sin elementwise ops sharing a common ancestor
+        (the angle tensor).
+        """
+        from phew.ir import Concat, Elementwise, FastRoPE
+
+        def _has_op(node, target_op, graph, depth=0):
+            if depth > 6:
+                return False
+            if isinstance(node, Elementwise) and node.op == target_op:
+                return True
+            return any(_has_op(p, target_op, graph, depth + 1) for p in graph.predecessors(node.id))
+
+        def _find_input(node, graph, depth=0):
+            """Walk back past elementwise/reduce ops to find an Input-like root."""
+            from phew.ir import Elementwise, Input
+
+            if depth > 8:
+                return None
+            if isinstance(node, Input):
+                return node
+            preds = graph.predecessors(node.id)
+            if not preds:
+                return None
+            # Prefer predecessors that aren't trig ops
+            for p in preds:
+                if isinstance(p, (Input,)):
+                    return p
+            for p in preds:
+                if not (isinstance(p, Elementwise) and p.op in ("cos", "sin")):
+                    result = _find_input(p, graph, depth + 1)
+                    if result:
+                        return result
+            return None
+
+        changed = False
+        for node in list(graph.topo_order()):
+            if not isinstance(node, Concat):
+                continue
+            preds = graph.predecessors(node.id)
+            if len(preds) < 2:
+                continue
+
+            # Both halves must involve cos and sin
+            all_preds_subtree = preds
+            has_cos = any(_has_op(p, "cos", graph) for p in all_preds_subtree)
+            has_sin = any(_has_op(p, "sin", graph) for p in all_preds_subtree)
+            if not (has_cos and has_sin):
+                continue
+
+            x_node = _find_input(preds[0], graph)
+            if x_node is None:
+                continue
+
+            dims = x_node.shape[-1] if x_node.shape else 0
+            new_node = FastRoPE(
+                shape=node.shape,
+                dtype=node.dtype,
+                inputs=[x_node.id],
+                dims=dims,
+                offset=0,
+            )
+            graph.replace(node.id, new_node)
+            changed = True
+
+        return changed
 
     # ------------------------------------------------------------------
     # Scaled dot-product attention

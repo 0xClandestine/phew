@@ -1,22 +1,18 @@
 # PHEW
 
-**Probably Hardly Ever Works**
+**Probably Hardly Ever Works** — a search-based superoptimizer for MLX on Apple Silicon.
 
-A search-based superoptimizer for MLX on Apple Silicon. Point it at working MLX code; it finds a measurably faster equivalent and proves the equivalence before handing it back.
+Point it at working MLX code. It finds a faster equivalent, proves the equivalence, and hands it back. If it can't beat your baseline across every problem size with verified correctness, you get your original code unchanged. No silent miscompiles.
 
-Single success metric: `optimized_ms / baseline_ms` with proven equivalence. If it can't beat the baseline across all problem sizes with verified correctness, it returns your original code unchanged.
+One number matters: `optimized_ms / baseline_ms`, with proof.
 
 ---
 
-## What's built
-
-### The full pipeline runs end-to-end
+## It actually works (sometimes — hence the name)
 
 ```
 phew run examples/rms_norm.py
 ```
-
-Produces:
 
 ```
               PHEW Optimization Result
@@ -31,101 +27,27 @@ Produces:
 ╰───────────────┴───────────────────────────────────╯
 ```
 
-Seven steps run automatically:
+Seven steps, all automatic:
 
-1. **Baseline benchmark** — auto-converges (increases iterations until σ/μ < 5%)
-2. **Bottleneck classification** — memory-bound / compute-bound / occupancy-limited / launch-overhead; prunes the rule set
-3. **Graph-level passes** — `mx.compile` wrapping, `mx.fast.*` primitive substitution, M5 TensorOps detection
-4. **E-graph saturation** — algebraic, layout, fusion, precision, quantization, and compile-boundary rules via [egglog](https://github.com/egraphs-good/egglog)
-5. **Code emission** — generates clean, copy-pasteable MLX Python
-6. **Multi-size benchmark** — validates the speedup holds across small/typical/large problem sizes, not just one
-7. **Equivalence verification** — probabilistic testing (Schwartz–Zippel-inspired): 5 seeds × 3 sizes × 4 edge variants (random, zeros, small-scale, large-scale). Candidate is dropped if any check fails.
-
-### IR (`phew/ir/`)
-
-A two-level μGraph (Mirage-derived). Kernel-level ops cover the full MLX surface: matmul, reduce, elementwise, transpose, reshape, cast, concat, split, broadcast, `mx.compile`, `mx.async_eval`, vmap, and all `mx.fast.*` primitives (rms_norm, layer_norm, rope, scaled_dot_product_attention, metal_kernel). Per-node R/W dependency tracking using the BALLS discipline (`device_mem`, `threadgroup_mem`, `register`, `control_flow`).
-
-The importer (`phew/ir/importer.py`) builds a graph by monkey-patching `mlx.core` ops during a trace pass.
-
-### Rules (`phew/rules/`)
-
-Three graph-level passes that run before e-graph saturation:
-
-- **Primitive substitution** — structural pattern matching for RMS norm → `mx.fast.rms_norm`, SDPA → `mx.fast.scaled_dot_product_attention`
-- **Compile boundaries** — wraps eligible subgraphs in `mx.compile`
-- **TensorOps** — detects M5/A19 hardware (`applegpu_g17+`) and substitutes eligible matmuls with Metal Performance Primitives kernels
-
-### E-graph saturation (`phew/egraph/`)
-
-Equality saturation via egglog (Python bindings). Rule sets:
-
-| Rule set | What it does |
-|---|---|
-| `algebraic` | Commutativity, associativity, matmul reassociation |
-| `layout` | Transpose-through-matmul: `(AB)ᵀ ↔ BᵀAᵀ` |
-| `precision` | Double-cast elimination; fp32→fp16/bf16 (opt-in) |
-| `quantization` | `matmul(x,w) → quantized_matmul(x,w,bits=4)` (opt-in) |
-| `compile_boundaries` | `matmul(a,b) → compiled(matmul(a,b))` |
-| `fusion` | Elementwise chains (placeholder; graph-level pass handles most cases) |
-
-Extraction uses greedy cost minimization by default; an ILP fallback (scipy) handles joint multi-pattern optimization.
-
-### Cost model (`phew/cost/`)
-
-Static cost model used for pruning only — final ranking is always on-device measurement. Bytes moved weighted by memory hierarchy level (register=1, threadgroup=4, L1=8, device=32). Occupancy proxy from Rosenzweig's M1 GPU model: 0–112 registers = full occupancy, 112–256 = linear falloff in steps of 64 threads, >256 = spill. Hard-rejects: threadgroup > 1024, threadgroup memory > device limit.
-
-### Verification (`phew/verify/`)
-
-Four substitution classes with explicit tolerances:
-
-| Class | atol | rtol | Opt-in required |
-|---|---|---|---|
-| fp32 → fp32 | 1e-5 | 1e-5 | No |
-| fp32 → fp16 | 1e-3 | 1e-2 | Yes |
-| fp32 → bf16 | 1e-2 | 1e-2 | Yes |
-| quantized (4-bit) | 1e-2 | 5e-2 | Yes |
-
-### Profiling (`phew/trace/`)
-
-`TraceCapture` wraps `mx.metal.start_capture` / `stop_capture`. The bottleneck classifier maps aggregated kernel stats to one of four classes that gate which rule sets are activated.
-
-### Benchmark harness (`phew/bench/`)
-
-Auto-converging benchmark: doubles iteration count until σ/μ < 5%. Speedup inside ±3% noise band is not reported as significant. Multi-size convergence check requires all problem sizes to beat baseline by >3%.
-
-### CLI (`phew/cli/`)
-
-```
-phew run    input.py [-o out.py]    # optimize and emit
-phew bench  input.py                # baseline benchmark only
-phew trace  input.py                # capture Metal GPU trace
-phew verify baseline.py opt.py      # verify equivalence standalone
-```
-
-### Code emission (`phew/emit/`)
-
-`MLXCodegen` generates clean MLX Python from the optimized graph. `KernelParamSearch` enumerates threadgroup/tile/vector-width/unroll combinations for Phase-2 kernel search.
+1. **Baseline benchmark** — auto-converges until σ/μ < 5%.
+2. **Bottleneck classifier** — memory / compute / occupancy / launch-overhead. Prunes the rule set.
+3. **Graph passes** — `mx.compile` wrapping, `mx.fast.*` substitution, M5 TensorOps detection.
+4. **E-graph saturation** — algebraic, layout, fusion, precision, quantization, compile-boundary rules via [egglog](https://github.com/egraphs-good/egglog).
+5. **Code emission** — clean, copy-pasteable MLX Python.
+6. **Multi-size benchmark** — speedup must hold at small, typical, *and* large sizes.
+7. **Equivalence verification** — Schwartz–Zippel-flavored: 5 seeds × 3 sizes × 4 edge variants. One failure, candidate dies.
 
 ---
 
 ## Install
 
 ```bash
-pip install phew-mlx
-# or
-uv pip install phew-mlx
+uv tool install phew-mlx
 ```
 
-This installs the `phew` CLI globally. Requires macOS 13.3+ on Apple Silicon.
+This installs `phew` as a globally available CLI command. Requires macOS 13.3+ on Apple Silicon.
 
-**For development:**
-
-```bash
-uv pip install --no-config -e ".[dev]"
-uv run --no-config pytest tests/ -v
-```
-
----
+Dev install: `uv pip install -e ".[dev]"`.
 
 ## Usage
 
@@ -138,95 +60,75 @@ def rms_norm(x, weight):
 
 def input_factory(size, seed):
     mx.random.seed(seed)
-    sizes = {"small": 256, "typical": 1024, "large": 4096}
-    n = sizes[size]
+    n = {"small": 256, "typical": 1024, "large": 4096}[size]
     return [mx.random.normal((n, 2048)), mx.ones((2048,))], {}
 
-opt = Optimizer(
-    fn=rms_norm,
-    input_factory=input_factory,
-    # Enable precision reduction if acceptable for your use case:
-    # enabled_subst_classes={SubstitutionClass.fp32_to_fp16},
-)
-result = opt.run()
-print(result.output_source)
+opt = Optimizer(fn=rms_norm, input_factory=input_factory)
+# Opt in to lossy precision: enabled_subst_classes={SubstitutionClass.fp32_to_fp16}
+print(opt.run().output_source)
+```
+
+## CLI
+
+```
+phew run    input.py [-o out.py]    # optimize and emit
+phew bench  input.py                # baseline benchmark only
+phew trace  input.py                # capture Metal GPU trace
+phew verify baseline.py opt.py      # verify equivalence standalone
 ```
 
 ---
 
-## Roadmap
+## What's inside
 
-### Correctness gaps
+**IR** (`phew/ir/`) — Two-level μGraph (Mirage-derived) covering the full MLX surface, with per-node R/W tracking inspired by the BALLS scheduling discipline. The importer monkey-patches `mlx.core` at trace time. Yes, that's as fragile as it sounds.
 
-- **IR round-trip from egglog** — `_egglog_to_graph` in `egraph/extraction.py` currently returns the original graph unchanged. The full round-trip (egglog expression → phew Graph) isn't implemented, so e-graph rewrites don't yet affect the emitted code. Graph-level passes (compile, primitive subst, TensorOps) do apply correctly.
-- **Primitive substitution correctness** — The RMS norm pattern matcher in `rules/primitive_subst.py` is structural only and currently produces incorrect results for some input shapes. Verification catches and drops these, but the pattern needs to be fixed.
-- **Layer norm pattern** — `rules/primitive_subst.py` has a stub; the layer norm matcher always returns False.
+**Graph passes** (`phew/rules/`) — Primitive substitution (RMS norm, SDPA), compile-boundary wrapping, M5/A19 TensorOps routing.
 
-### Phase-2 kernel search
+**E-graph** (`phew/egraph/`) — Equality saturation via egglog. Greedy cost-min extraction by default; ILP fallback (scipy) when greedy gets stuck.
 
-The `KernelParamSearch` in `emit/metal_kernel.py` enumerates parameter combinations (threadgroup size, tile dimensions, SIMD width, vector width, unroll factor) but the kernel source template doesn't yet wire in the `THREADGROUP`, `VW`, and `UNROLL` template variables. Phase-2 runs only when the hottest kernel is >30% of GPU time and not replaceable by a `fast.*` primitive.
+| Rule set | What it does |
+|---|---|
+| `algebraic` | Commutativity, associativity, matmul reassociation |
+| `layout` | Transpose-through-matmul: `(AB)ᵀ ↔ BᵀAᵀ` |
+| `precision` | Double-cast elimination; fp32 → fp16/bf16 (opt-in) |
+| `quantization` | `matmul → quantized_matmul(bits=4)` (opt-in) |
+| `compile_boundaries` | `matmul(a,b) → compiled(matmul(a,b))` |
+| `fusion` | Elementwise chains (placeholder) |
 
-**External kernel parameter sweep** — currently Phase-2 only applies to kernels PHEW emits itself. A natural extension is to accept a user-supplied Metal kernel source and sweep its compile-time constants (e.g., `ITERS`, `HC` in a Sinkhorn kernel), using PHEW's benchmark harness to find the best configuration.
+**Cost model** (`phew/cost/`) — Pruning only; final ranking is always on-device. Bytes weighted by hierarchy (register=1, threadgroup=4, L1=8, device=32). Occupancy from Rosenzweig's M1 model.
 
-### Tracer fidelity
+**Verification** (`phew/verify/`) — Four classes, opt-in for anything lossy:
 
-`ir/importer.py` monkey-patches `mlx.core` ops at trace time. This is fragile for functions with:
-- Control flow (conditionals, loops over tensors)
-- In-place updates
-- Custom Metal kernels (`mx.fast.metal_kernel`)
-- Nested `mx.compile` scopes
+| Class | atol | rtol | Opt-in |
+|---|---|---|---|
+| fp32 → fp32 | 1e-5 | 1e-5 | No |
+| fp32 → fp16 | 1e-3 | 1e-2 | Yes |
+| fp32 → bf16 | 1e-2 | 1e-2 | Yes |
+| quantized (4-bit) | 1e-2 | 5e-2 | Yes |
 
-A more robust approach is to use MLX's computation graph API directly once it stabilises.
-
-### egglog shape awareness
-
-The egglog type encoding in `egraph/rules_egglog.py` uses a single `Tensor` type without shape or dtype. Shape-aware rewrites (layout rules, broadcast elimination, reshape-through-matmul) need shape information propagated into the e-graph, which requires a more structured type encoding or a separate shape-inference pass.
-
-### Rules not yet implemented
-
-- Elementwise fusion chains (the `fusion` rule set is a placeholder)
-- `mx.async_eval` placement for CPU-overlapping loops
-- `vmap` exploitation
-- `mx.quantize` integration for weight-only quantization
-
-### TensorOps
-
-The Metal kernel source in `rules/tensorops.py` is a placeholder. The real implementation needs the MPP `cooperative_tensor` API from Metal Performance Primitives (available on M5/A19+, WWDC 2025 #315).
-
-### M5 Hardware
-
-TensorOps detection uses architecture string parsing (`applegpu_g17+`). The current test environment is `applegpu_g16s` (M4). Full TensorOps testing requires M5/A19 hardware.
+**Bench harness** (`phew/bench/`) — Doubles iterations until σ/μ < 5%. Speedups inside ±3% don't count. Multi-size convergence requires every size to beat baseline by >3%.
 
 ---
 
-## Design references
+## Where it falls over (the honest part)
 
-```bibtex
-@inproceedings{mirage2025,
-  title     = {Mirage: A Multi-Level Superoptimizer for Tensor Programs},
-  author    = {Wu, Mengdi and Yao, Zhen and Chen, Jian and Liu, Zhijian},
-  booktitle = {19th USENIX Symposium on Operating Systems Design and Implementation (OSDI 2025)},
-  year      = {2025},
-  note      = {arXiv:2405.05751}
-}
+Named PHEW for a reason:
 
-@inproceedings{tensat2021,
-  title     = {Equality Saturation for Tensor Graph Superoptimization},
-  author    = {Yang, Yichen and Phothilimthana, Phitchaya Mangpo and Hong, Yisu Remy and Murthy, Madhura and Moon, Shishir G. and Steinhardt, Jacob},
-  booktitle = {Proceedings of Machine Learning and Systems (MLSys 2021)},
-  year      = {2021},
-  note      = {arXiv:2101.01332}
-}
+- **E-graph round-trip is incomplete.** `_egglog_to_graph` returns the original graph unchanged — e-graph rewrites don't yet affect emitted code. Graph-level passes do apply; that's where the example speedup comes from.
+- **Phase-2 template constants** (`VW`, `UNROLL`) only take effect when the kernel source explicitly references those names. Threadgroup size is varied unconditionally via the `threadgroup=` call param and always has effect.
+- **Tracer is fragile** with control flow, in-place updates, custom Metal kernels, or nested `mx.compile`. Right move is MLX's graph API once it stabilizes.
+- **egglog has no shape awareness** — single `Tensor` type, no shape or dtype. Shape-aware rewrites need a structured type encoding or separate inference pass. This also blocks ILP extraction (e-class internals not exposed by the Python bindings) and primitive-subst rules in the e-graph (handled as a graph pass instead).
+- **Missing rules:** `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization.
+- **TensorOps is a placeholder.** Real impl needs MPP `cooperative_tensor` (M5/A19+, WWDC 2025 #315). Current test env is `applegpu_g16s` (M4).
 
-@inproceedings{egg2021,
-  title     = {egg: Fast and Extensible Equality Saturation},
-  author    = {Willsey, Max and Nandi, Chandrakana and Wang, Yisu Remy and Flatt, Oliver and Tatlock, Zachary and Panchekha, Pavel},
-  booktitle = {Proceedings of the ACM on Programming Languages (POPL 2021)},
-  year      = {2021}
-}
-```
+---
 
-- BALLS (Philogy) — R/W-dependency-tracked scheduling discipline
-- Rosenzweig, *Dissecting the Apple M1 GPU* — occupancy and register pressure model
-- Zakharyo 2025 — M5 TensorOps tile constraints
-- Apple WWDC 2025 #315 — MLX optimization guidance
+## References
+
+- [Mirage: A Multi-Level Superoptimizer for Tensor Programs](https://arxiv.org/abs/2405.05751) — Wu et al., OSDI 2025
+- [Equality Saturation for Tensor Graph Superoptimization](https://arxiv.org/abs/2101.01332) — Yang et al., MLSys 2021
+- [egg: Fast and Extensible Equality Saturation](https://doi.org/10.1145/3434304) — Willsey et al., POPL 2021
+- [BALLS](https://github.com/Philogy/balls) — Philogy's R/W-dependency-tracked scheduling discipline (originally for EVM stack scheduling; adapted here for GPU memory regions)
+- [Dissecting the Apple M1 GPU, part III](https://alyssarosenzweig.ca/blog/asahi-gpu-part-3.html) — Rosenzweig, occupancy and register pressure model
+- [Get started with MLX for Apple silicon](https://developer.apple.com/videos/play/wwdc2025/315/) — Apple WWDC 2025 #315
