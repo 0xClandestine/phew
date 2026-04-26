@@ -28,11 +28,44 @@ console = Console()
 
 
 def _load_module(path: str):
-    """Load a Python file as a module and return it."""
+    """Load a Python file as a module and return it.
+
+    Patches ``mx.fast.metal_kernel`` before exec so that any
+    ``mx.fast.metal_kernel(...)`` calls at module level produce
+    ``_MetalKernelWrapper`` objects that PHEW's tracer can intercept.
+    """
+    from phew.ir.importer import _MetalKernelWrapper
+
+    try:
+        import mlx.core.fast as _mx_fast
+
+        _orig_mk = getattr(_mx_fast, "metal_kernel", None)
+    except ImportError:
+        _orig_mk = None
+
+    if _orig_mk is not None:
+
+        def _patched_mk(name, input_names, output_names, source, header="", **kw):
+            real = _orig_mk(
+                name=name,
+                input_names=input_names,
+                output_names=output_names,
+                source=source,
+                header=header,
+                **kw,
+            )
+            return _MetalKernelWrapper(real, name, input_names, output_names, source, header)
+
+        _mx_fast.metal_kernel = _patched_mk
+
     p = Path(path).resolve()
     spec = importlib.util.spec_from_file_location("_phew_target", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+
+    if _orig_mk is not None:
+        _mx_fast.metal_kernel = _orig_mk  # restore; wrappers remain in module globals
+
     return mod
 
 

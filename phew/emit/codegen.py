@@ -63,6 +63,7 @@ class MLXCodegen:
             Input,
             MatMul,
             MetalKernel,
+            MetalKernelSelect,
             QuantizedMatMul,
             Reduce,
             Reshape,
@@ -72,6 +73,8 @@ class MLXCodegen:
 
         lines: list[str] = []
         name_map: dict[int, str] = {}
+        # Maps MetalKernel node.id → the "_out" variable name (the tuple returned by the call)
+        kernel_out_map: dict[int, str] = {}
         var_counter = [0]
 
         def fresh(prefix: str = "t") -> str:
@@ -250,7 +253,14 @@ class MLXCodegen:
 
             elif isinstance(node, MetalKernel):
                 vname = fresh("kernel")
-                lines.extend(self._emit_metal_kernel(node, ins, vname))
+                lines.extend(self._emit_metal_kernel(node, ins, vname, kernel_out_map))
+
+            elif isinstance(node, MetalKernelSelect):
+                vname = fresh()
+                kernel_out_var = kernel_out_map.get(
+                    node.inputs[0], f"_missing_{node.inputs[0]}_out"
+                )
+                lines.append(f"{vname} = {kernel_out_var}[{node.output_idx}]")
 
             else:
                 vname = fresh("unknown")
@@ -268,7 +278,9 @@ class MLXCodegen:
 
         return lines
 
-    def _emit_metal_kernel(self, node, ins: list[str], vname: str) -> list[str]:
+    def _emit_metal_kernel(
+        self, node, ins: list[str], vname: str, kernel_out_map: dict
+    ) -> list[str]:
         lines = []
         kname = f"_kernel_{node.id}"
         # Emit kernel definition
@@ -284,9 +296,7 @@ class MLXCodegen:
         if node.header:
             lines.append(f'    header="""{header_escaped}""",')
         lines.append(")")
-        # Emit kernel call.
-        # Grid and output shapes are computed dynamically from the first
-        # array input so the kernel works across batch sizes.
+
         inputs_str = f"[{', '.join(ins)}]"
         dtypes_str = "[" + ", ".join(f"mx.{d.to_mlx()}" for d in node.output_dtypes) + "]"
         tg = node.threadgroup
@@ -296,40 +306,64 @@ class MLXCodegen:
                 for k, v in node.template_params
             ]
         )
-        # Find the input whose numel matches the output numel — that one carries
-        # the correct dynamic shape for the grid and output_shapes call.
-        target_numel = 1
-        for sh in node.output_shapes[:1]:
-            for s in sh:
+
+        n_outputs = len(node.output_shapes)
+
+        if n_outputs == 1:
+            # Single output: use matching input for dynamic shape / grid.
+            target_numel = 1
+            for s in node.output_shapes[0]:
                 target_numel *= s
-        matching_inp = None
-        if node.input_shapes:
-            for var_name, in_sh in zip(ins, node.input_shapes):
-                n = 1
-                for s in in_sh:
-                    n *= s
-                if n == target_numel:
-                    matching_inp = var_name
-                    break
-            if matching_inp is None:
-                # Fall back to the input with the largest numel
-                best_n = 0
+            matching_inp = None
+            if node.input_shapes:
                 for var_name, in_sh in zip(ins, node.input_shapes):
                     n = 1
                     for s in in_sh:
                         n *= s
-                    if n > best_n:
-                        best_n = n
+                    if n == target_numel:
                         matching_inp = var_name
-        if matching_inp is None and ins:
-            matching_inp = ins[0]
-        if matching_inp and len(node.output_shapes) == 1:
-            shapes_expr = f"[{matching_inp}.shape]"
-            grid_expr = f"({matching_inp}.size, 1, 1)"
+                        break
+                if matching_inp is None:
+                    best_n = 0
+                    for var_name, in_sh in zip(ins, node.input_shapes):
+                        n = 1
+                        for s in in_sh:
+                            n *= s
+                        if n > best_n:
+                            best_n = n
+                            matching_inp = var_name
+            if matching_inp is None and ins:
+                matching_inp = ins[0]
+            shapes_expr = f"[{matching_inp}.shape]" if matching_inp else str(node.output_shapes)
+            grid_expr = f"({matching_inp}.size, 1, 1)" if matching_inp else "(1, 1, 1)"
         else:
-            shapes_expr = str(node.output_shapes)
-            grid_expr = str(node.grid) if node.grid else "(1, 1, 1)"
-        lines.append(f"{vname}_out = {kname}(")
+            # Multi-output: detect the dynamic batch dimension from grid[0].
+            # If grid[0] equals the first dim of the first output, and some input
+            # also has that as its first dim, use {inp}.shape[0] for dynamism.
+            batch_val = node.grid[0] if node.grid else 0
+            batch_inp = None
+            if node.input_shapes and batch_val:
+                for var_name, in_sh in zip(ins, node.input_shapes):
+                    if in_sh and in_sh[0] == batch_val:
+                        batch_inp = var_name
+                        break
+
+            if batch_inp is not None and node.output_shapes[0] and node.output_shapes[0][0] == batch_val:
+                bvar = f"_B_{node.id}"
+                lines.append(f"{bvar} = {batch_inp}.shape[0]")
+
+                def _shape_expr(sh):
+                    dims = [bvar if d == batch_val else str(d) for d in sh]
+                    return "(" + ", ".join(dims) + ("," if len(dims) == 1 else "") + ")"
+
+                shapes_expr = "[" + ", ".join(_shape_expr(sh) for sh in node.output_shapes) + "]"
+                grid_expr = f"({bvar}, 1, 1)"
+            else:
+                shapes_expr = str(node.output_shapes)
+                grid_expr = str(node.grid) if node.grid else "(1, 1, 1)"
+
+        out_var = f"{vname}_out"
+        lines.append(f"{out_var} = {kname}(")
         lines.append(f"    inputs={inputs_str},")
         lines.append(f"    output_shapes={shapes_expr},")
         lines.append(f"    output_dtypes={dtypes_str},")
@@ -337,5 +371,11 @@ class MLXCodegen:
         lines.append(f"    threadgroup={tg},")
         lines.append(f"    template={tmpl},")
         lines.append(")")
-        lines.append(f"{vname} = {vname}_out[0]")
+
+        kernel_out_map[node.id] = out_var
+
+        if n_outputs == 1:
+            # Single-output: extract immediately; no MetalKernelSelect nodes expected.
+            lines.append(f"{vname} = {out_var}[0]")
+
         return lines

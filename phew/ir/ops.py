@@ -203,6 +203,18 @@ class QuantizedMatMul(Node):
 
 
 @dataclass
+class MetalKernelSelect(Node):
+    """Extracts output ``output_idx`` from a multi-output MetalKernel node.
+
+    Used when a kernel produces more than one output array.  The single
+    MetalKernel node represents the dispatch; one MetalKernelSelect node per
+    output array carries the per-output shape and dtype.
+    """
+
+    output_idx: int = 0
+
+
+@dataclass
 class MetalKernel(Node):
     """A custom kernel produced by Phase-2 search.
 
