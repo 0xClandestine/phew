@@ -141,11 +141,13 @@ class _TracedArray:
         return _TracedArray(node, self._graph)
 
     def _reduce_method(self, op: str, axis=None, keepdims=False, **_) -> "_TracedArray":
-        axes = (
-            (axis,)
-            if isinstance(axis, int)
-            else (tuple(axis) if axis is not None else tuple(range(len(self._node.shape))))
-        )
+        ndim = len(self._node.shape)
+        if isinstance(axis, int):
+            axes = (axis % ndim,)
+        elif axis is not None:
+            axes = tuple(a % ndim for a in axis)
+        else:
+            axes = tuple(range(ndim))
         out_shape = _reduce_shape(self._node.shape, axes, bool(keepdims))
         node = Reduce(
             shape=out_shape,
@@ -312,11 +314,13 @@ class _TracingContext:
     def _reduce(self, x, op, axis, keepdims) -> _TracedArray:
         if not isinstance(x, _TracedArray):
             return x
-        axes = (
-            (axis,)
-            if isinstance(axis, int)
-            else (tuple(axis) if axis is not None else tuple(range(len(x.shape))))
-        )
+        ndim = len(x.shape)
+        if isinstance(axis, int):
+            axes = (axis % ndim,)
+        elif axis is not None:
+            axes = tuple(a % ndim for a in axis)
+        else:
+            axes = tuple(range(ndim))
         out_shape = _reduce_shape(x.shape, axes, keepdims)
         node = Reduce(
             shape=out_shape,

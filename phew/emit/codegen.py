@@ -280,23 +280,56 @@ class MLXCodegen:
         if node.header:
             lines.append(f'    header="""{header_escaped}""",')
         lines.append(")")
-        # Emit kernel call
+        # Emit kernel call.
+        # Grid and output shapes are computed dynamically from the first
+        # array input so the kernel works across batch sizes.
         inputs_str = f"[{', '.join(ins)}]"
-        shapes_str = str(node.output_shapes)
         dtypes_str = "[" + ", ".join(f"mx.{d.to_mlx()}" for d in node.output_dtypes) + "]"
         tg = node.threadgroup
-        grid = node.grid or "(1, 1, 1)"
         tmpl = str(
             [
                 (k, f"mx.{v}" if isinstance(v, str) and not v.startswith("mx.") else v)
                 for k, v in node.template_params
             ]
         )
+        # Find the input whose numel matches the output numel — that one carries
+        # the correct dynamic shape for the grid and output_shapes call.
+        target_numel = 1
+        for sh in node.output_shapes[:1]:
+            for s in sh:
+                target_numel *= s
+        matching_inp = None
+        if node.input_shapes:
+            for var_name, in_sh in zip(ins, node.input_shapes):
+                n = 1
+                for s in in_sh:
+                    n *= s
+                if n == target_numel:
+                    matching_inp = var_name
+                    break
+            if matching_inp is None:
+                # Fall back to the input with the largest numel
+                best_n = 0
+                for var_name, in_sh in zip(ins, node.input_shapes):
+                    n = 1
+                    for s in in_sh:
+                        n *= s
+                    if n > best_n:
+                        best_n = n
+                        matching_inp = var_name
+        if matching_inp is None and ins:
+            matching_inp = ins[0]
+        if matching_inp and len(node.output_shapes) == 1:
+            shapes_expr = f"[{matching_inp}.shape]"
+            grid_expr = f"({matching_inp}.size, 1, 1)"
+        else:
+            shapes_expr = str(node.output_shapes)
+            grid_expr = str(node.grid) if node.grid else "(1, 1, 1)"
         lines.append(f"{vname}_out = {kname}(")
         lines.append(f"    inputs={inputs_str},")
-        lines.append(f"    output_shapes={shapes_str},")
+        lines.append(f"    output_shapes={shapes_expr},")
         lines.append(f"    output_dtypes={dtypes_str},")
-        lines.append(f"    grid={grid},")
+        lines.append(f"    grid={grid_expr},")
         lines.append(f"    threadgroup={tg},")
         lines.append(f"    template={tmpl},")
         lines.append(")")

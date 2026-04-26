@@ -222,4 +222,5 @@ class MetalKernel(Node):
     output_names: list[str] = field(default_factory=list)
     output_shapes: list[tuple[int, ...]] = field(default_factory=list)
     output_dtypes: list[Dtype] = field(default_factory=list)
+    input_shapes: list[tuple[int, ...]] = field(default_factory=list)
     deps: MemDep = field(default=MemDep.device_mem | MemDep.threadgroup_mem)

@@ -23,13 +23,19 @@ def run_all_passes(
     enable_compile: bool = True,
     enable_primitive_subst: bool = True,
     enable_tensorops: bool = True,
+    enable_fusion: bool = False,
 ) -> tuple["Graph", list[str]]:
     """Run graph-level passes. Return (graph, list_of_applied_pass_names)."""
     from .compile_boundaries import CompileBoundaryPass
+    from .fusion import ElementwiseFusionPass
     from .primitive_subst import PrimitiveSubstPass
     from .tensorops import TensorOpsPass
 
     applied: list[str] = []
+
+    if enable_fusion:
+        if ElementwiseFusionPass().run(graph):
+            applied.append("elementwise_fusion")
 
     if enable_compile:
         if CompileBoundaryPass().run(graph):

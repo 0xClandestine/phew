@@ -10,6 +10,7 @@ inside the egglog e-graph via phew/egraph/rules_egglog.py.
 """
 
 from .compile_boundaries import CompileBoundaryPass
+from .fusion import ElementwiseFusionPass
 from .graph_passes import run_all_passes
 from .primitive_subst import PrimitiveSubstPass
 from .tensorops import TensorOpsPass
@@ -17,6 +18,7 @@ from .tensorops import TensorOpsPass
 __all__ = [
     "PrimitiveSubstPass",
     "CompileBoundaryPass",
+    "ElementwiseFusionPass",
     "TensorOpsPass",
     "run_all_passes",
 ]
