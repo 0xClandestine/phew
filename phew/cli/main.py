@@ -143,10 +143,16 @@ def cli():
     "--diff",
     is_flag=True,
     default=False,
-    help="Show a unified diff of input vs optimized source instead of the full output",
+    help="Print a unified diff of input vs optimized source to stdout",
+)
+@click.option(
+    "--diff-output",
+    default=None,
+    metavar="FILE",
+    help="Write the unified diff to FILE (implies --diff)",
 )
 def run(
-    input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_iters, strategy, fusion, diff
+    input_file, output, trace, allow_fp16, allow_bf16, allow_quant, eqsat_iters, strategy, fusion, diff, diff_output
 ):
     """Optimize INPUT_FILE and emit faster equivalent code."""
     from phew import Optimizer
@@ -183,38 +189,45 @@ def run(
 
     _print_result(result)
 
-    if diff:
+    if diff or diff_output:
         import difflib
 
         original = Path(input_file).read_text().splitlines(keepends=True)
         optimized = result.output_source.splitlines(keepends=True)
-        delta = difflib.unified_diff(
-            original,
-            optimized,
-            fromfile=input_file,
-            tofile=output or input_file + " [optimized]",
+        diff_text = "".join(
+            difflib.unified_diff(
+                original,
+                optimized,
+                fromfile=input_file,
+                tofile=output or input_file + " [optimized]",
+            )
         )
-        diff_text = "".join(delta)
-        if diff_text:
-            console.print("\n[bold]Diff:[/bold]")
-            for line in diff_text.splitlines():
-                if line.startswith("+++") or line.startswith("---"):
-                    console.print(f"[bold]{line}[/bold]", markup=False)
-                elif line.startswith("+"):
-                    console.print(f"[green]{line}[/green]", markup=False)
-                elif line.startswith("-"):
-                    console.print(f"[red]{line}[/red]", markup=False)
-                elif line.startswith("@@"):
-                    console.print(f"[cyan]{line}[/cyan]", markup=False)
-                else:
-                    console.print(line, markup=False)
-        else:
-            console.print("\n[dim]No changes — optimized source is identical to input.[/dim]")
+
+        if diff_output:
+            Path(diff_output).write_text(diff_text)
+            console.print(f"\n[green]Diff written to {diff_output}[/green]")
+
+        if diff:
+            if diff_text:
+                console.print("\n[bold]Diff:[/bold]")
+                for line in diff_text.splitlines():
+                    if line.startswith("+++") or line.startswith("---"):
+                        console.print(f"[bold]{line}[/bold]", markup=False)
+                    elif line.startswith("+"):
+                        console.print(f"[green]{line}[/green]", markup=False)
+                    elif line.startswith("-"):
+                        console.print(f"[red]{line}[/red]", markup=False)
+                    elif line.startswith("@@"):
+                        console.print(f"[cyan]{line}[/cyan]", markup=False)
+                    else:
+                        console.print(line, markup=False)
+            else:
+                console.print("\n[dim]No changes — optimized source is identical to input.[/dim]")
 
     if output:
         Path(output).write_text(result.output_source)
         console.print(f"\n[green]Optimized code written to {output}[/green]")
-    elif not diff:
+    elif not diff and not diff_output:
         console.print("\n[bold]Optimized source:[/bold]")
         console.print(result.output_source)
 
