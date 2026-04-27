@@ -108,6 +108,7 @@ phew verify baseline.py opt.py      # verify equivalence standalone
 | fp32 → fp16 | 1e-3 | 1e-2 | Yes |
 | fp32 → bf16 | 1e-2 | 1e-2 | Yes |
 | quantized (4-bit) | 1e-2 | 5e-2 | Yes |
+| normed_matmul | 1e-3 | 1e-1 | Yes |
 
 **Bench harness** (`phew/bench/`) — Doubles iterations until σ/μ < 5%. Speedups inside ±3% don't count. Multi-size convergence requires every size to beat baseline by >3%.
 
@@ -119,10 +120,10 @@ Named PHEW for a reason:
 
 - **E-graph round-trip is incomplete.** `_egglog_to_graph` returns the original graph unchanged — e-graph rewrites don't yet affect emitted code. Graph-level passes do apply; that's where the example speedup comes from.
 - **Phase-2 template constants** (`VW`, `UNROLL`) only take effect when the kernel source explicitly references those names. Threadgroup size is varied unconditionally via the `threadgroup=` call param and always has effect.
-- **Tracer is fragile** with control flow, in-place updates, custom Metal kernels, or nested `mx.compile`. Right move is MLX's graph API once it stabilizes.
+- **Tracer is fragile** with control flow, in-place updates, custom Metal kernels, or nested `mx.compile`. Common patterns work (nn.Linear weights, activation functions, variadic `.transpose()`), but the right fix is MLX's graph API once it stabilizes.
 - **egglog has no shape awareness** — single `Tensor` type, no shape or dtype. Shape-aware rewrites need a structured type encoding or separate inference pass. This also blocks ILP extraction (e-class internals not exposed by the Python bindings) and primitive-subst rules in the e-graph (handled as a graph pass instead).
-- **Missing rules:** `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization.
-- **TensorOps is a placeholder.** Real impl needs MPP `cooperative_tensor` (M5/A19+, WWDC 2025 #315). Current test env is `applegpu_g16s` (M4).
+- **Missing rules:** `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization. (`normed_matmul` — `(x@W)*rms_scalar → rms_norm(x)@W` — landed in 0.2.2 as an opt-in class.)
+- **TensorOps generates valid MSL** (`simdgroup_matrix`, M2+) but is slower than MLX's native GEMM and disabled by default (`enable_tensorops=False`). Real speedup needs MPP `cooperative_tensor` (M5/A19+, WWDC 2025 #315).
 
 ---
 
