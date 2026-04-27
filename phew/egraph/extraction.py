@@ -280,9 +280,7 @@ class Extractor:
                 egraph, root_expr, node_map, original_graph, cost_model, str_node_map
             )
         else:
-            return self._ilp(
-                egraph, root_expr, node_map, original_graph, cost_model, str_node_map
-            )
+            return self._ilp(egraph, root_expr, node_map, original_graph, cost_model, str_node_map)
 
     def _greedy(
         self, egraph, root_expr, node_map, graph, cost_model, str_node_map=None
