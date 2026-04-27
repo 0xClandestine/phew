@@ -11,6 +11,7 @@ dependencies = [
     "mlx>=0.24.0",
     "numpy>=1.26.0",
     "click>=8.1.0,<9",
+    "rich-click>=1.6.0",
     "scipy>=1.12.0",      # ILP extraction via scipy.optimize.milp
     "egglog>=0.9.0",      # e-graph saturation
     "rich>=13.0.0",       # CLI output
