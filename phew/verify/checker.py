@@ -168,6 +168,7 @@ class EquivalenceChecker:
                             tol = self.tolerance
                             if is_bf16:
                                 from .tolerances import Tolerance
+
                                 out_mean = float(np.mean(np.abs(b_np)))
                                 # Relax tolerance proportionally for extreme outputs
                                 # (large_scale variant with 1e6 inputs → ~1e21 outputs)
