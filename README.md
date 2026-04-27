@@ -135,3 +135,9 @@ Named PHEW for a reason:
 - [BALLS](https://github.com/Philogy/balls) — Philogy's R/W-dependency-tracked scheduling discipline (originally for EVM stack scheduling; adapted here for GPU memory regions)
 - [Dissecting the Apple M1 GPU, part III](https://alyssarosenzweig.ca/blog/asahi-gpu-part-3.html) — Rosenzweig, occupancy and register pressure model
 - [Get started with MLX for Apple silicon](https://developer.apple.com/videos/play/wwdc2025/315/) — Apple WWDC 2025 #315
+
+---
+
+## License
+
+Apache 2.0 — see [LICENSE.md](LICENSE.md).
