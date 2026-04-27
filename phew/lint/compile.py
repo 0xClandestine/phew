@@ -39,10 +39,7 @@ class _Visitor(ast.NodeVisitor):
                     file=self.filename,
                     line=node.lineno,
                     rule=CompileRule.id,
-                    message=(
-                        f"def {node.name}() uses mx ops but has no @mx.compile"
-                        "  →  add @mx.compile for ~1.5–3× free speedup"
-                    ),
+                    message=f"def {node.name}()  →  add @mx.compile",
                 )
             )
 

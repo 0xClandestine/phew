@@ -19,13 +19,65 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-import click
+import rich_click as click
 from rich import box
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
 console = Console()
+
+
+# ---------------------------------------------------------------------------
+# Version check
+# ---------------------------------------------------------------------------
+
+
+def _check_for_updates() -> None:
+    """Warn if a newer version is available on PyPI. Result cached for 24 h."""
+    import importlib.metadata
+    import json
+    import urllib.request
+    from datetime import datetime, timedelta
+    from pathlib import Path
+
+    try:
+        current = importlib.metadata.version("phew-mlx")
+    except importlib.metadata.PackageNotFoundError:
+        return
+
+    cache_dir = Path.home() / ".cache" / "phew"
+    cache_file = cache_dir / "version_check.json"
+
+    latest: str | None = None
+    if cache_file.exists():
+        try:
+            data = json.loads(cache_file.read_text())
+            if datetime.now() - datetime.fromisoformat(data["checked_at"]) < timedelta(hours=24):
+                latest = data.get("latest")
+        except Exception:
+            pass
+
+    if latest is None:
+        try:
+            with urllib.request.urlopen("https://pypi.org/pypi/phew-mlx/json", timeout=1) as resp:
+                latest = json.loads(resp.read())["info"]["version"]
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(
+                json.dumps({"checked_at": datetime.now().isoformat(), "latest": latest})
+            )
+        except Exception:
+            return
+
+    if latest and latest != current:
+        try:
+            if tuple(int(x) for x in latest.split(".")) > tuple(int(x) for x in current.split(".")):
+                console.print(
+                    f"[yellow]phew {latest} is available (you have {current}) — "
+                    "run [bold]phew upgrade[/bold] to update.[/yellow]"
+                )
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +154,7 @@ def _get_fn_and_factory(mod) -> tuple[Callable, Callable]:
 @click.version_option(package_name="phew-mlx")
 def cli():
     """PHEW — MLX/Metal optimizer for Apple Silicon."""
+    _check_for_updates()
 
 
 # ---------------------------------------------------------------------------
@@ -682,10 +735,12 @@ def lint(path, rule, as_json):
         "unvectorized_loop": "cyan",
     }
 
+    rule_width = max(len(i.rule) for i in issues)
+
     for issue in issues:
         color = rule_colors.get(issue.rule, "white")
         loc = f"{issue.file}:{issue.line}"
-        rule_col = f"[{color}]{issue.rule:<20}[/{color}]"
+        rule_col = f"[{color}]{issue.rule:<{rule_width}}[/{color}]"
         # Split on  →  to color the suggestion green
         parts = issue.message.split("  →  ", 1)
         if len(parts) == 2:
