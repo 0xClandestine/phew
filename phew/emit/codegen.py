@@ -25,7 +25,7 @@ class MLXCodegen:
 
     def emit(self, graph: "Graph", fn_name: str = "optimized") -> str:
         """Return Python source string for the optimized function."""
-        from phew.ir import Compile, Input
+        from phew.ir import Compile
 
         lines: list[str] = []
         lines.append("import mlx.core as mx")
@@ -54,6 +54,7 @@ class MLXCodegen:
 
     def _emit_body(self, graph: "Graph") -> list[str]:
         from phew.ir import (
+            AsyncEval,
             Cast,
             Compile,
             Concat,
@@ -235,6 +236,15 @@ class MLXCodegen:
             elif isinstance(node, Compile):
                 # Handled at function level via @mx.compile decorator; pass through
                 vname = ins[0] if ins else fresh("compiled")
+                name_map[node.id] = vname
+                continue
+
+            elif isinstance(node, AsyncEval):
+                # mx.async_eval schedules evaluation without blocking, overlapping
+                # CPU work with GPU execution. Pass-through: the output array
+                # reference is unchanged; the async_eval call is a side effect.
+                vname = ins[0] if ins else fresh("async")
+                lines.append(f"mx.async_eval({', '.join(ins)})")
                 name_map[node.id] = vname
                 continue
 
