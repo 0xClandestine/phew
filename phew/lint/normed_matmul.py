@@ -42,7 +42,6 @@ class _Visitor(ast.NodeVisitor):
                             message=(
                                 "(x @ W) * rsqrt(mean(x²)+eps)"
                                 "  →  mx.fast.rms_norm(x, None, eps=eps) @ W"
-                                "  [opt-in: SubstitutionClass.normed_matmul]"
                             ),
                         )
                     )

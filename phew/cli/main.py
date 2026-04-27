@@ -5,11 +5,16 @@ Commands:
   phew bench  <input.py>   — baseline benchmark only
   phew trace  <input.py>   — capture Metal GPU trace
   phew verify <input.py> <optimized.py>  — verify equivalence
+  phew lint   <path>       — static scan for inefficiency patterns
+  phew metal  list|wrap    — analyse .metal files
+  phew skill               — print Claude Code skill guide
+  phew upgrade             — upgrade to latest version
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Callable
@@ -17,6 +22,7 @@ from typing import Callable
 import click
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 console = Console()
@@ -95,7 +101,7 @@ def _get_fn_and_factory(mod) -> tuple[Callable, Callable]:
 @click.group()
 @click.version_option(package_name="phew-mlx")
 def cli():
-    """PHEW — MLX/Metal superoptimizer for Apple Silicon."""
+    """PHEW — MLX/Metal optimizer for Apple Silicon."""
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +157,20 @@ def cli():
     metavar="FILE",
     help="Write the unified diff to FILE (implies --diff)",
 )
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit result as JSON (suppresses all other output)",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress progress output and search trace",
+)
 def run(
     input_file,
     output,
@@ -163,8 +183,14 @@ def run(
     fusion,
     diff,
     diff_output,
+    as_json,
+    quiet,
 ):
-    """Optimize INPUT_FILE and emit faster equivalent code."""
+    """Optimize INPUT_FILE and emit faster equivalent code.
+
+    Exits 0 if a significant, verified speedup was found.
+    Exits 1 if optimization failed, verification failed, or no speedup.
+    """
     from phew import Optimizer
     from phew.verify import SubstitutionClass
 
@@ -176,13 +202,16 @@ def run(
     enabled = {SubstitutionClass.fp32_to_fp32}
     if allow_fp16:
         enabled.add(SubstitutionClass.fp32_to_fp16)
-        console.print("[yellow]Opt-in: fp32→fp16 precision substitution[/yellow]")
+        if not as_json and not quiet:
+            console.print("[yellow]Opt-in: fp32→fp16 precision substitution[/yellow]")
     if allow_bf16:
         enabled.add(SubstitutionClass.fp32_to_bf16)
-        console.print("[yellow]Opt-in: fp32→bf16 precision substitution[/yellow]")
+        if not as_json and not quiet:
+            console.print("[yellow]Opt-in: fp32→bf16 precision substitution[/yellow]")
     if allow_quant:
         enabled.add(SubstitutionClass.quantized_4bit)
-        console.print("[yellow]Opt-in: 4-bit quantization[/yellow]")
+        if not as_json and not quiet:
+            console.print("[yellow]Opt-in: 4-bit quantization[/yellow]")
 
     opt = Optimizer(
         fn=fn,
@@ -194,10 +223,29 @@ def run(
         enable_fusion=fusion,
     )
 
-    console.print("[bold]Running PHEW optimizer...[/bold]")
+    if not as_json and not quiet:
+        console.print("[bold]Running PHEW optimizer...[/bold]")
+
     result = opt.run(trace_path=trace)
 
-    _print_result(result)
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "baseline_ms": result.baseline_ms,
+                    "optimized_ms": result.optimized_ms,
+                    "speedup": result.speedup,
+                    "significant": result.is_significant,
+                    "verified": result.verification_passed,
+                    "applied_rules": result.applied_rules,
+                    "hardware": result.hardware_info,
+                    "warnings": result.warnings,
+                    "search_trace": result.search_trace,
+                }
+            )
+        )
+    else:
+        _print_result(result, quiet=quiet)
 
     if diff or diff_output:
         import difflib
@@ -215,12 +263,11 @@ def run(
 
         if diff_output:
             Path(diff_output).write_text(diff_text)
-            console.print(f"\n[green]Diff written to {diff_output}[/green]")
+            if not as_json and not quiet:
+                console.print(f"\n[green]Diff written to {diff_output}[/green]")
 
-        if diff:
+        if diff and not as_json:
             if diff_text:
-                from rich.markup import escape
-
                 console.print("\n[bold]Diff:[/bold]")
                 for line in diff_text.splitlines():
                     esc = escape(line)
@@ -239,10 +286,15 @@ def run(
 
     if output:
         Path(output).write_text(result.output_source)
-        console.print(f"\n[green]Optimized code written to {output}[/green]")
-    elif not diff and not diff_output:
+        if not as_json and not quiet:
+            console.print(f"\n[green]Optimized code written to {output}[/green]")
+    elif not diff and not diff_output and not as_json:
         console.print("\n[bold]Optimized source:[/bold]")
         console.print(result.output_source)
+
+    # Exit 1 if no meaningful result for the agent
+    if not result.is_significant or not result.verification_passed:
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +306,14 @@ def run(
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--n-warmup", default=5, show_default=True)
 @click.option("--n-bench", default=20, show_default=True)
-def bench(input_file, n_warmup, n_bench):
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit results as JSON",
+)
+def bench(input_file, n_warmup, n_bench, as_json):
     """Benchmark the baseline function in INPUT_FILE."""
     from phew.bench import benchmark
 
@@ -263,6 +322,27 @@ def bench(input_file, n_warmup, n_bench):
     mod = _load_module(input_file)
     fn, input_factory = _get_fn_and_factory(mod)
 
+    rows = []
+    for size_label in ["small", "typical", "large"]:
+        try:
+            args, kwargs = input_factory(size_label, 0)
+            result = benchmark(fn, *args, n_warmup=n_warmup, n_bench=n_bench, **kwargs)
+            rows.append(
+                {
+                    "size": size_label,
+                    "mean_ms": result.mean_ms,
+                    "std_ms": result.std_ms,
+                    "cv": result.cv,
+                    "converged": result.converged,
+                }
+            )
+        except Exception as exc:
+            rows.append({"size": size_label, "error": str(exc)})
+
+    if as_json:
+        print(json.dumps(rows))
+        return
+
     table = Table(title="Benchmark Results", box=box.ROUNDED)
     table.add_column("Size", style="cyan")
     table.add_column("Mean (ms)", justify="right")
@@ -270,19 +350,17 @@ def bench(input_file, n_warmup, n_bench):
     table.add_column("CV", justify="right")
     table.add_column("Converged", justify="center")
 
-    for size_label in ["small", "typical", "large"]:
-        try:
-            args, kwargs = input_factory(size_label, 0)
-            result = benchmark(fn, *args, n_warmup=n_warmup, n_bench=n_bench, **kwargs)
+    for row in rows:
+        if "error" in row:
+            table.add_row(row["size"], "ERROR", row["error"], "-", "-")
+        else:
             table.add_row(
-                size_label,
-                f"{result.mean_ms:.3f}",
-                f"{result.std_ms:.3f}",
-                f"{result.cv:.3f}",
-                "[green]yes[/green]" if result.converged else "[red]no[/red]",
+                row["size"],
+                f"{row['mean_ms']:.3f}",
+                f"{row['std_ms']:.3f}",
+                f"{row['cv']:.3f}",
+                "[green]yes[/green]" if row["converged"] else "[red]no[/red]",
             )
-        except Exception as exc:
-            table.add_row(size_label, "ERROR", str(exc), "-", "-")
 
     console.print(table)
 
@@ -360,8 +438,18 @@ def trace(input_file, output, n_iters):
 )
 @click.option("--allow-bf16", is_flag=True, default=False)
 @click.option("--allow-quant", is_flag=True, default=False)
-def verify(baseline_file, optimized_file, allow_fp16, allow_bf16, allow_quant):
-    """Verify that OPTIMIZED_FILE is equivalent to BASELINE_FILE."""
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit result as JSON",
+)
+def verify(baseline_file, optimized_file, allow_fp16, allow_bf16, allow_quant, as_json):
+    """Verify that OPTIMIZED_FILE is equivalent to BASELINE_FILE.
+
+    Exits 0 on PASS, 1 on FAIL.
+    """
     from phew.verify import EquivalenceChecker, SubstitutionClass
 
     baseline_mod = _load_module(baseline_file)
@@ -383,12 +471,23 @@ def verify(baseline_file, optimized_file, allow_fp16, allow_bf16, allow_quant):
     checker = EquivalenceChecker(enabled_classes=enabled)
     result = checker.check(baseline_fn, optimized_fn, input_factory)
 
-    if result.passed:
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    "passed": result.passed,
+                    "failures": result.failures if hasattr(result, "failures") else [],
+                }
+            )
+        )
+    elif result.passed:
         console.print(f"[bold green]PASS[/bold green] {result}")
     else:
         console.print(f"[bold red]FAIL[/bold red] {result}")
         for f in result.failures:
             console.print(f"  [red]{f}[/red]")
+
+    if not result.passed:
         sys.exit(1)
 
 
@@ -410,7 +509,7 @@ def _check_metal() -> None:
         sys.exit(1)
 
 
-def _print_result(result) -> None:
+def _print_result(result, quiet: bool = False) -> None:
     """Pretty-print an OptimizationResult."""
     table = Table(title="PHEW Optimization Result", box=box.ROUNDED)
     table.add_column("Metric", style="cyan")
@@ -437,9 +536,50 @@ def _print_result(result) -> None:
         for w in result.warnings:
             console.print(f"[yellow]WARNING:[/yellow] {w}")
 
-    console.print("\n[dim]Search trace:[/dim]")
-    for line in result.search_trace:
-        console.print(f"  [dim]{line}[/dim]")
+    if not quiet:
+        console.print("\n[dim]Search trace:[/dim]")
+        for line in result.search_trace:
+            console.print(f"  [dim]{line}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# phew upgrade
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+def upgrade():
+    """Upgrade phew to the latest version."""
+    import importlib.metadata
+    import shutil
+    import subprocess
+
+    try:
+        before = importlib.metadata.version("phew-mlx")
+    except importlib.metadata.PackageNotFoundError:
+        before = None
+
+    if shutil.which("uv"):
+        subprocess.run(["uv", "tool", "upgrade", "phew-mlx"], check=False)
+    else:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "phew-mlx"], check=False
+        )
+
+    try:
+        # Reload metadata after upgrade
+        import importlib
+
+        importlib.invalidate_caches()
+        after = importlib.metadata.version("phew-mlx")
+    except importlib.metadata.PackageNotFoundError:
+        after = None
+
+    if before and after:
+        if before == after:
+            console.print(f"[dim]Already at latest ({after})[/dim]")
+        else:
+            console.print(f"[green]{before} → {after}[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +599,7 @@ def skill():
         version = "(dev)"
 
     text = importlib.resources.files("phew").joinpath("SKILL.md").read_text()
-    console.print(text.replace("{version}", version))
+    print(text.replace("{version}", version))
 
 
 # ---------------------------------------------------------------------------
@@ -472,17 +612,31 @@ def skill():
 @click.option(
     "--rule", "-r", multiple=True, help="Filter to rule(s): rms_norm, normed_matmul, sdpa, compile"
 )
-def lint(path, rule):
-    """Scan PATH for MLX inefficiency patterns.
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit issues as JSON array",
+)
+def lint(path, rule, as_json):
+    """Scan PATH for MLX and Metal inefficiency patterns.
 
-    PATH may be a file or directory (searched recursively).
+    PATH may be a .py file, .metal file, or directory (searched recursively).
 
     \b
-    Rules:
+    Python rules:
       rms_norm       x*rsqrt(mean(x²)+eps)*w  →  mx.fast.rms_norm
       normed_matmul  (x@W)*rsqrt(mean(x²)+eps)  →  mx.fast.rms_norm(x,None)@W
       sdpa           softmax(Q@K.T*s)@V  →  mx.fast.scaled_dot_product_attention
       compile        mx-op function missing @mx.compile
+
+    \b
+    Metal rules (.metal files):
+      max_threads         missing [[max_total_threads_per_threadgroup(N)]]
+      missing_simd_reduce threadgroup reduction without simd_sum first pass
+      half_accumulator    scalar half local used as accumulator
+      unvectorized_loop   strided loop over half* reading scalarly
     """
     from phew.lint import lint_path
     from phew.metal.checker import lint_metal_file
@@ -499,6 +653,17 @@ def lint(path, rule):
 
     if rule:
         issues = [i for i in issues if i.rule in rule]
+
+    if as_json:
+        print(
+            json.dumps(
+                [
+                    {"file": i.file, "line": i.line, "rule": i.rule, "message": i.message}
+                    for i in sorted(issues, key=lambda i: (i.file, i.line))
+                ]
+            )
+        )
+        return
 
     if not issues:
         console.print("[green]No issues found.[/green]")
@@ -517,16 +682,18 @@ def lint(path, rule):
         "unvectorized_loop": "cyan",
     }
 
-    current_file = None
     for issue in issues:
-        if issue.file != current_file:
-            current_file = issue.file
-            console.print(f"\n[bold]{issue.file}[/bold]")
-        from rich.markup import escape
-
         color = rule_colors.get(issue.rule, "white")
-        msg = escape(issue.message)
-        console.print(f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {msg}")
+        loc = f"{issue.file}:{issue.line}"
+        rule_col = f"[{color}]{issue.rule:<20}[/{color}]"
+        # Split on  →  to color the suggestion green
+        parts = issue.message.split("  →  ", 1)
+        if len(parts) == 2:
+            what, fix = escape(parts[0]), escape(parts[1])
+            msg = f"{what}  [dim]→[/dim]  [green]{fix}[/green]"
+        else:
+            msg = escape(issue.message)
+        console.print(f"[dim]{loc}[/dim]  {rule_col}  {msg}")
 
     total = len(issues)
     rule_counts: dict[str, int] = {}
@@ -548,12 +715,37 @@ def metal():
 
 @metal.command("list")
 @click.argument("metal_file", type=click.Path(exists=True))
-def metal_list(metal_file):
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit kernel list as JSON",
+)
+def metal_list(metal_file, as_json):
     """List all [[kernel]] functions found in METAL_FILE."""
     from phew.metal.parser import parse_kernels
 
     source = Path(metal_file).read_text(errors="replace")
     kernels = parse_kernels(source)
+
+    if as_json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "name": sig.name,
+                        "line": sig.line,
+                        "inputs": len(sig.input_args),
+                        "outputs": len(sig.output_args),
+                        "constants": len(sig.constant_args),
+                        "has_max_threads_attr": sig.has_max_threads_attr,
+                    }
+                    for sig in kernels
+                ]
+            )
+        )
+        return
 
     if not kernels:
         console.print("[yellow]No [[kernel]] functions found.[/yellow]")
@@ -607,4 +799,4 @@ def metal_wrap(metal_file, output, kernel):
         Path(output).write_text(text)
         console.print(f"[green]Wrapper written to {output}[/green]")
     else:
-        console.print(text)
+        print(text)

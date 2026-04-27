@@ -48,8 +48,8 @@ class MaxThreadsRule(MetalRule):
                 kernel=sig.name,
                 rule=self.id,
                 message=(
-                    f"kernel {sig.name}() has no [[max_total_threads_per_threadgroup(N)]]"
-                    "  →  add to let the compiler optimise register allocation"
+                    f"{sig.name}() missing [[max_total_threads_per_threadgroup(N)]]"
+                    "  →  add attribute to hint compiler register allocation"
                 ),
             )
         ]
@@ -96,8 +96,7 @@ class HalfAccumulatorRule(MetalRule):
                         kernel=sig.name,
                         rule=self.id,
                         message=(
-                            f"scalar `half {varname}` in {sig.name}()"
-                            "  →  use `float` for accumulation; convert to half only on store"
+                            f"`half {varname}` in {sig.name}()  →  use float; cast to half on store"
                         ),
                     )
                 )
@@ -156,9 +155,8 @@ class MissingSimdReduceRule(MetalRule):
                 kernel=sig.name,
                 rule=self.id,
                 message=(
-                    f"{sig.name}(): threadgroup reduction with no simd_sum() first pass"
-                    "  →  acc = simd_sum(acc); then only 1 barrier needed across SIMD groups"
-                    "  (see gemv_f16 pattern in same file)"
+                    f"{sig.name}() threadgroup reduction without simd_sum"
+                    "  →  add simd_sum(acc) before writing to shared memory"
                 ),
             )
         ]
@@ -199,10 +197,7 @@ class VectorizationRule(MetalRule):
                 line=sig.line,
                 kernel=sig.name,
                 rule=self.id,
-                message=(
-                    f"{sig.name}(): strided loop reads half* scalarly"
-                    "  →  load as half4 (4× bandwidth); ensure dim divisible by 4 or add tail"
-                ),
+                message=(f"{sig.name}() strided half* loop  →  use half4 loads for 4× bandwidth"),
             )
         ]
 
