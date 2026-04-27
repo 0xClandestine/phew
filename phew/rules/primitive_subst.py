@@ -287,7 +287,15 @@ class PrimitiveSubstPass:
 
     def _match_sdpa(self, graph: "Graph") -> bool:
         """Match softmax(Q @ K^T * scale) @ V → FastScaledDotProductAttention."""
-        from phew.ir import Cast, Constant, Elementwise, FastScaledDotProductAttention, MatMul, Reduce, Transpose
+        from phew.ir import (
+            Cast,
+            Constant,
+            Elementwise,
+            FastScaledDotProductAttention,
+            MatMul,
+            Reduce,
+            Transpose,
+        )
 
         changed = False
 
