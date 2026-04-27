@@ -85,16 +85,21 @@ phew bench  input.py                # baseline benchmark only
 phew trace  input.py                # capture Metal GPU trace
 phew verify baseline.py opt.py      # verify equivalence standalone
 phew lint   path/                   # scan for inefficiency patterns (no harness needed)
+phew metal  list kernel.metal       # list all [[kernel]] functions
+phew metal  wrap kernel.metal       # generate mx.fast.metal_kernel wrappers
 ```
 
 ### phew lint
 
-Scans Python files statically for known MLX inefficiencies. No `input_factory`, no execution — just point it at a file or directory.
+Scans Python and `.metal` files statically for known inefficiencies. No `input_factory`, no execution — just point it at a file or directory.
 
 ```
 phew lint mlx_lm/models/
 phew lint model.py -r rms_norm,sdpa   # filter to specific rules
+phew lint kernels.metal               # Metal rules apply automatically
 ```
+
+**Python rules:**
 
 | Rule | Pattern | Suggestion |
 |---|---|---|
@@ -103,7 +108,16 @@ phew lint model.py -r rms_norm,sdpa   # filter to specific rules
 | `sdpa` | `softmax(Q @ K.T * s) @ V` | `mx.fast.scaled_dot_product_attention(Q, K, V, scale=s)` |
 | `compile` | standalone mx-op function, no `@mx.compile` | add `@mx.compile` |
 
-Catches inline single-expression patterns. Split-assignment form (`rsqrt = mx.rsqrt(...); result = (x @ W) * rsqrt`) requires the full optimizer.
+**Metal rules (`.metal` files):**
+
+| Rule | Pattern | Suggestion |
+|---|---|---|
+| `max_threads` | kernel missing `[[max_total_threads_per_threadgroup(N)]]` | add attribute to guide register allocation |
+| `missing_simd_reduce` | threadgroup barrier reduction without `simd_sum` first pass | `acc = simd_sum(acc)` before writing to threadgroup memory |
+| `half_accumulator` | scalar `half` local used as accumulator | use `float`; convert to `half` on store only |
+| `unvectorized_loop` | strided loop over `half*` reading one element at a time | use `half4` loads for 4× bandwidth |
+
+Catches inline single-expression patterns in Python. Split-assignment form requires the full optimizer. Metal rules operate on the kernel body directly.
 
 ---
 

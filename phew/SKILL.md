@@ -1,15 +1,16 @@
 # phew skill — optimize MLX kernels on Apple Silicon
 
-PHEW is a search-based superoptimizer for MLX/Metal. It finds verified-equivalent rewrites of your MLX Python functions that are measurably faster on device.
+PHEW is an optimizer for MLX/Metal. It finds verified-equivalent rewrites of your MLX Python functions that are measurably faster on device. It also statically scans Python and `.metal` files for known inefficiency patterns.
 
 ## Quick scan (no harness required)
 
 ```bash
-phew lint path/to/model.py          # scan for known patterns
+phew lint path/to/model.py          # scan Python files for known patterns
 phew lint src/ --rule compile       # filter to one rule
+phew lint kernels.metal             # scan a .metal file
 ```
 
-Rules caught by lint:
+**Python rules:**
 
 | Rule | Pattern detected |
 |------|-----------------|
@@ -17,6 +18,15 @@ Rules caught by lint:
 | `normed_matmul` | `(x @ W) * rsqrt(mean(x²) + eps)` → `mx.fast.rms_norm(x, None) @ W` |
 | `sdpa` | `softmax(Q @ K.T * s) @ V` → `mx.fast.scaled_dot_product_attention` |
 | `compile` | mx-op function missing `@mx.compile` |
+
+**Metal rules (`.metal` files):**
+
+| Rule | Pattern detected |
+|------|-----------------|
+| `max_threads` | kernel missing `[[max_total_threads_per_threadgroup(N)]]` |
+| `missing_simd_reduce` | threadgroup barrier reduction without `simd_sum` first pass |
+| `half_accumulator` | scalar `half` local used as accumulator instead of `float` |
+| `unvectorized_loop` | strided loop over `half*` reading scalarly instead of `half4` |
 
 Apply lint hits manually or hand them to the optimizer.
 
@@ -97,6 +107,19 @@ phew run my_kernel.py --trace phew_trace.gputrace  # use existing trace
 ```
 
 Trace is optional but improves rule pruning (bottleneck-driven search).
+
+## .metal files
+
+```bash
+phew metal list kernels.metal           # list all [[kernel]] functions and arg counts
+phew metal wrap kernels.metal           # generate mx.fast.metal_kernel Python wrappers
+phew metal wrap kernels.metal -k gemv   # wrap a single kernel by name
+phew metal wrap kernels.metal -o harness.py
+```
+
+`phew metal wrap` generates a Python harness with `mx.fast.metal_kernel` objects and stub wrapper functions. Review all `# TODO` comments before use — constant scalar args (`constant T &x`) need to be packed into a struct buffer or baked as template constants, and grid/threadgroup dimensions must be set for your problem size.
+
+Once wrapped, feed the harness into `phew run` for Phase-2 threadgroup parameter search.
 
 ## Verify a hand-written optimization
 
