@@ -485,8 +485,18 @@ def lint(path, rule):
       compile        mx-op function missing @mx.compile
     """
     from phew.lint import lint_path
+    from phew.metal.checker import lint_metal_file
 
-    issues = lint_path(path)
+    p = Path(path)
+    if p.suffix == ".metal":
+        issues = lint_metal_file(p)
+    elif p.is_dir():
+        issues = lint_path(p)
+        for metal_file in sorted(p.rglob("*.metal")):
+            issues.extend(lint_metal_file(metal_file))
+    else:
+        issues = lint_path(p)
+
     if rule:
         issues = [i for i in issues if i.rule in rule]
 
@@ -501,6 +511,10 @@ def lint(path, rule):
         "normed_matmul": "yellow",
         "sdpa": "magenta",
         "compile": "blue",
+        "max_threads": "red",
+        "half_accumulator": "yellow",
+        "missing_simd_reduce": "magenta",
+        "unvectorized_loop": "cyan",
     }
 
     current_file = None
@@ -508,10 +522,11 @@ def lint(path, rule):
         if issue.file != current_file:
             current_file = issue.file
             console.print(f"\n[bold]{issue.file}[/bold]")
+        from rich.markup import escape
+
         color = rule_colors.get(issue.rule, "white")
-        console.print(
-            f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {issue.message}"
-        )
+        msg = escape(issue.message)
+        console.print(f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {msg}")
 
     total = len(issues)
     rule_counts: dict[str, int] = {}
@@ -519,3 +534,77 @@ def lint(path, rule):
         rule_counts[i.rule] = rule_counts.get(i.rule, 0) + 1
     summary = "  ".join(f"{r}: {c}" for r, c in sorted(rule_counts.items()))
     console.print(f"\n[bold]{total} issue{'s' if total != 1 else ''}[/bold]  ({summary})")
+
+
+# ---------------------------------------------------------------------------
+# phew metal
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def metal():
+    """Analyse and wrap .metal kernel files."""
+
+
+@metal.command("list")
+@click.argument("metal_file", type=click.Path(exists=True))
+def metal_list(metal_file):
+    """List all [[kernel]] functions found in METAL_FILE."""
+    from phew.metal.parser import parse_kernels
+
+    source = Path(metal_file).read_text(errors="replace")
+    kernels = parse_kernels(source)
+
+    if not kernels:
+        console.print("[yellow]No [[kernel]] functions found.[/yellow]")
+        return
+
+    table = Table(title=f"Kernels in {Path(metal_file).name}", box=box.ROUNDED)
+    table.add_column("Line", style="dim", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Inputs", justify="right")
+    table.add_column("Outputs", justify="right")
+    table.add_column("Constants", justify="right")
+    table.add_column("max_threads", justify="center")
+
+    for sig in kernels:
+        table.add_row(
+            str(sig.line),
+            sig.name,
+            str(len(sig.input_args)),
+            str(len(sig.output_args)),
+            str(len(sig.constant_args)),
+            "[green]yes[/green]" if sig.has_max_threads_attr else "[red]no[/red]",
+        )
+
+    console.print(table)
+
+
+@metal.command("wrap")
+@click.argument("metal_file", type=click.Path(exists=True))
+@click.option("--output", "-o", default=None, help="Output .py file (default: stdout)")
+@click.option(
+    "--kernel",
+    "-k",
+    multiple=True,
+    help="Only wrap specific kernel(s) by name (default: all)",
+)
+def metal_wrap(metal_file, output, kernel):
+    """Generate mx.fast.metal_kernel Python wrappers for kernels in METAL_FILE."""
+    from phew.metal.parser import parse_kernels
+    from phew.metal.wrapper import generate_file
+
+    source = Path(metal_file).read_text(errors="replace")
+    kernels = parse_kernels(source)
+
+    if not kernels:
+        raise click.ClickException("No [[kernel]] functions found.")
+
+    include = list(kernel) if kernel else None
+    text = generate_file(kernels, metal_file, include=include)
+
+    if output:
+        Path(output).write_text(text)
+        console.print(f"[green]Wrapper written to {output}[/green]")
+    else:
+        console.print(text)

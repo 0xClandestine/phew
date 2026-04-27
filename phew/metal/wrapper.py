@@ -1,0 +1,146 @@
+"""Generate mx.fast.metal_kernel Python wrappers from parsed kernel signatures."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from .parser import KernelSig
+
+
+def _msl_type_to_mx(msl_type: str) -> str:
+    """Map MSL element type to mlx dtype string."""
+    t = msl_type.strip().lower()
+    if "half" in t:
+        return "mx.float16"
+    if "float" in t:
+        return "mx.float32"
+    if "uint" in t or "unsigned int" in t:
+        return "mx.uint32"
+    if "int" in t:
+        return "mx.int32"
+    return "mx.float32"
+
+
+def generate_wrapper(sig: KernelSig, source_path: str | Path) -> str:
+    """
+    Generate a Python snippet that wraps *sig* with mx.fast.metal_kernel.
+
+    Limitations documented inline:
+    - `constant T &scalar` args cannot be passed directly; they are flagged as TODOs.
+    - Threadgroup memory size must be set manually.
+    - Grid/threadgroup dimensions are left as TODOs.
+    """
+    source_path = Path(source_path)
+    lines: list[str] = []
+
+    inputs = sig.input_args
+    outputs = sig.output_args
+    constants = sig.constant_args
+    tg_args = sig.threadgroup_args
+
+    input_names = [a.name for a in inputs]
+    output_names = [a.name for a in outputs]
+
+    has_constants = bool(constants)
+    has_tg = bool(tg_args)
+
+    # ------------------------------------------------------------------
+    # Header comment
+    # ------------------------------------------------------------------
+    lines.append(f"# Wrapper for kernel: {sig.name}  (line {sig.line} of {source_path.name})")
+    if has_constants:
+        const_names = ", ".join(f"{a.name}: {a.type}" for a in constants)
+        lines.append(f"# NOTE: constant args ({const_names}) cannot be passed directly to")
+        lines.append("# mx.fast.metal_kernel. Options: (a) pack into a struct buffer, or")
+        lines.append("# (b) bake as template constants if known at compile time.")
+    if has_tg:
+        tg_names = ", ".join(a.name for a in tg_args)
+        lines.append(f"# NOTE: threadgroup memory ({tg_names}) size must be set via")
+        lines.append("# the threadgroup_memory_length argument in the kernel call.")
+    lines.append("")
+
+    # ------------------------------------------------------------------
+    # Kernel object
+    # ------------------------------------------------------------------
+    lines.append(f"_{sig.name}_kernel = mx.fast.metal_kernel(")
+    lines.append(f'    name="{sig.name}",')
+    lines.append(f"    input_names={input_names!r},")
+    lines.append(f"    output_names={output_names!r},")
+    lines.append(f'    source=open("{source_path.name}").read(),')
+    lines.append("    # header is not needed — kernel is declared in the source above")
+    lines.append(")")
+    lines.append("")
+
+    # ------------------------------------------------------------------
+    # Python wrapper function
+    # ------------------------------------------------------------------
+    py_args = [f"{a.name}: mx.array" for a in inputs]
+    if has_constants:
+        for a in constants:
+            py_type = "int" if "uint" in a.type or "int" in a.type else "float"
+            py_args.append(f"{a.name}: {py_type}")
+    py_args.append("# TODO: grid, threadgroup")
+
+    lines.append(f"def {sig.name}(")
+    for arg in py_args:
+        lines.append(f"    {arg},")
+    lines.append(") -> list[mx.array]:")
+
+    # Docstring
+    lines.append(f'    """Call the {sig.name} Metal kernel via mx.fast.metal_kernel.')
+    lines.append("")
+    if has_constants:
+        lines.append("    Constant args must be converted to mx.array inputs or template")
+        lines.append("    parameters before calling. See comment above.")
+    lines.append('    """')
+
+    lines.append(f"    return _{sig.name}_kernel(")
+    lines.append(f"        inputs=[{', '.join(a.name for a in inputs)}],")
+
+    # Output shapes — best-effort guess from first input
+    if outputs and inputs:
+        out_shapes = ", ".join(f"{inputs[0].name}.shape" for _ in outputs)
+        out_dtypes = ", ".join(_msl_type_to_mx(o.type) for o in outputs)
+        lines.append(f"        output_shapes=[{out_shapes}],  # TODO: verify")
+        lines.append(f"        output_dtypes=[{out_dtypes}],  # TODO: verify")
+    else:
+        lines.append("        output_shapes=[],  # TODO")
+        lines.append("        output_dtypes=[],  # TODO")
+
+    lines.append("        grid=(1, 1, 1),  # TODO: set dispatch grid")
+    lines.append("        threadgroup=(256, 1, 1),  # TODO: tune")
+    if has_tg:
+        lines.append(
+            "        threadgroup_memory_length=[0],  # TODO: set threadgroup mem size in bytes"
+        )
+    lines.append("    )")
+
+    return "\n".join(lines)
+
+
+def generate_file(
+    kernels: list[KernelSig],
+    source_path: str | Path,
+    include: list[str] | None = None,
+) -> str:
+    """Generate a complete Python file wrapping all (or selected) kernels."""
+    source_path = Path(source_path)
+    parts: list[str] = [
+        "# Generated by phew metal wrap",
+        f"# Source: {source_path.name}",
+        "#",
+        "# Review all TODO comments before use.",
+        "",
+        "import mlx.core as mx",
+        "",
+        "",
+    ]
+
+    for sig in kernels:
+        if include and sig.name not in include:
+            continue
+        parts.append(generate_wrapper(sig, source_path))
+        parts.append("")
+        parts.append("")
+
+    return "\n".join(parts)
