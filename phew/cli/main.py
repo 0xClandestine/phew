@@ -440,3 +440,60 @@ def _print_result(result) -> None:
     console.print("\n[dim]Search trace:[/dim]")
     for line in result.search_trace:
         console.print(f"  [dim]{line}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# phew lint  (appended)
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--rule", "-r", multiple=True,
+              help="Filter to rule(s): rms_norm, normed_matmul, sdpa, compile")
+def lint(path, rule):
+    """Scan PATH for MLX inefficiency patterns.
+
+    PATH may be a file or directory (searched recursively).
+
+    \b
+    Rules:
+      rms_norm       x*rsqrt(mean(x²)+eps)*w  →  mx.fast.rms_norm
+      normed_matmul  (x@W)*rsqrt(mean(x²)+eps)  →  mx.fast.rms_norm(x,None)@W
+      sdpa           softmax(Q@K.T*s)@V  →  mx.fast.scaled_dot_product_attention
+      compile        mx-op function missing @mx.compile
+    """
+    from phew.lint import lint_path
+
+    issues = lint_path(path)
+    if rule:
+        issues = [i for i in issues if i.rule in rule]
+
+    if not issues:
+        console.print("[green]No issues found.[/green]")
+        return
+
+    issues.sort(key=lambda i: (i.file, i.line))
+
+    rule_colors = {
+        "rms_norm": "cyan",
+        "normed_matmul": "yellow",
+        "sdpa": "magenta",
+        "compile": "blue",
+    }
+
+    current_file = None
+    for issue in issues:
+        if issue.file != current_file:
+            current_file = issue.file
+            console.print(f"\n[bold]{issue.file}[/bold]")
+        color = rule_colors.get(issue.rule, "white")
+        console.print(
+            f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {issue.message}"
+        )
+
+    total = len(issues)
+    rule_counts: dict[str, int] = {}
+    for i in issues:
+        rule_counts[i.rule] = rule_counts.get(i.rule, 0) + 1
+    summary = "  ".join(f"{r}: {c}" for r, c in sorted(rule_counts.items()))
+    console.print(f"\n[bold]{total} issue{'s' if total != 1 else ''}[/bold]  ({summary})")
