@@ -522,9 +522,11 @@ def lint(path, rule):
         if issue.file != current_file:
             current_file = issue.file
             console.print(f"\n[bold]{issue.file}[/bold]")
+        from rich.markup import escape
+
         color = rule_colors.get(issue.rule, "white")
         console.print(
-            f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {issue.message}"
+            f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {escape(issue.message)}"
         )
 
     total = len(issues)
