@@ -68,6 +68,62 @@ def contains(node: ast.expr, predicate, depth: int = 0, max_depth: int = 8) -> b
     )
 
 
+# Type annotation fragments that indicate non-compilable MLX arguments.
+_NON_COMPILABLE_FRAGMENTS: frozenset[str] = frozenset(
+    [
+        "Callable",
+        "callable",
+        "Module",  # nn.Module, PreTrainedModel, …
+        "Generator",
+        "Iterator",
+        "Iterable",
+        "AsyncGenerator",
+        "Tokenizer",
+        "Processor",
+    ]
+)
+
+# Arg names that almost always indicate non-compilable objects when unannotated.
+_NON_COMPILABLE_ARG_NAMES: frozenset[str] = frozenset(
+    ["model", "tokenizer", "sampler", "processor", "logits_processor", "logits_processors"]
+)
+
+
+def has_noncompilable_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return True if any parameter is likely non-compilable by ``mx.compile``."""
+    all_args = node.args.args + node.args.posonlyargs + node.args.kwonlyargs
+    for arg in all_args:
+        if arg.annotation is not None:
+            try:
+                ann = ast.unparse(arg.annotation)
+            except Exception:
+                ann = ""
+            if any(frag in ann for frag in _NON_COMPILABLE_FRAGMENTS):
+                return True
+        if arg.arg in _NON_COMPILABLE_ARG_NAMES:
+            return True
+    return False
+
+
+def uses_mx_random(node: ast.AST) -> bool:
+    """True if *node* calls ``mx.random.*`` or accesses ``mx.random``."""
+    for n in ast.walk(node):
+        if not isinstance(n, ast.Attribute):
+            continue
+        # mx.random  (attr access — random.categorical etc. chained on this)
+        if n.attr == "random" and isinstance(n.value, ast.Name) and n.value.id in ("mx", "mlx"):
+            return True
+        # mx.random.X  (e.g. mx.random.categorical)
+        if (
+            isinstance(n.value, ast.Attribute)
+            and n.value.attr == "random"
+            and isinstance(n.value.value, ast.Name)
+            and n.value.value.id in ("mx", "mlx")
+        ):
+            return True
+    return False
+
+
 def has_compile_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for dec in node.decorator_list:
         if isinstance(dec, ast.Attribute) and dec.attr == "compile":

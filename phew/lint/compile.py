@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from ._utils import has_compile_decorator, node_uses_mx
+from ._utils import has_compile_decorator, has_noncompilable_args, node_uses_mx, uses_mx_random
 from .rule import LintIssue, Rule
 
 
@@ -33,15 +33,28 @@ class _Visitor(ast.NodeVisitor):
         args = node.args.args
         if args and args[0].arg in ("self", "cls"):
             return
-        if node_uses_mx(node):
-            self.issues.append(
-                LintIssue(
-                    file=self.filename,
-                    line=node.lineno,
-                    rule=CompileRule.id,
-                    message=f"def {node.name}()  →  add @mx.compile",
-                )
+        _random = uses_mx_random(node)
+        if not node_uses_mx(node) and not _random:
+            return
+        # Skip functions whose arguments can't be traced by mx.compile
+        # (nn.Module, Callable, Tokenizer, Generator, etc.).
+        if has_noncompilable_args(node):
+            return
+        if _random:
+            msg = (
+                f"def {node.name}()  →  "
+                "@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)"
             )
+        else:
+            msg = f"def {node.name}()  →  add @mx.compile"
+        self.issues.append(
+            LintIssue(
+                file=self.filename,
+                line=node.lineno,
+                rule=CompileRule.id,
+                message=msg,
+            )
+        )
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._check(node)
