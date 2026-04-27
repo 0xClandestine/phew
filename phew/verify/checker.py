@@ -62,11 +62,17 @@ class EquivalenceChecker:
     ) -> None:
         self.subst_class = subst_class
         self.n_seeds = n_seeds
-        self.tolerance = TOLERANCES[subst_class]
         # Default: fp32_to_fp32 always enabled; others require opt-in
         if enabled_classes is None:
             enabled_classes = {SubstitutionClass.fp32_to_fp32}
         self.enabled_classes = enabled_classes
+        # Use the loosest tolerance across all enabled classes so that opt-in
+        # rules (e.g. normed_matmul) are verified against appropriate thresholds.
+        self.tolerance = max(
+            (TOLERANCES[c] for c in enabled_classes if c in TOLERANCES),
+            key=lambda t: t.atol,
+            default=TOLERANCES[SubstitutionClass.fp32_to_fp32],
+        )
 
     def check(
         self,

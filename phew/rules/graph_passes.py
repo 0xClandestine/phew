@@ -34,6 +34,7 @@ def run_all_passes(
     precision_dtype=None,
     quantization_bits: int = 4,
     quantization_group_size: int = 64,
+    enabled_subst_classes: set | None = None,
 ) -> tuple["Graph", list[str]]:
     """Run graph-level passes. Return (graph, list_of_applied_pass_names).
 
@@ -50,6 +51,9 @@ def run_all_passes(
         Bit-width for QuantizationPass (4 or 8). Default 4.
     quantization_group_size:
         Group size for group-wise quantization. Default 64.
+    enabled_subst_classes:
+        Set of SubstitutionClass values forwarded to PrimitiveSubstPass to
+        gate opt-in rules (e.g. normed_matmul).
     """
     from .algebraic import AlgebraicPass
     from .compile_boundaries import CompileBoundaryPass
@@ -90,7 +94,7 @@ def run_all_passes(
             applied.append("compile_boundary")
 
     if enable_primitive_subst:
-        if PrimitiveSubstPass().run(graph):
+        if PrimitiveSubstPass(enabled_classes=enabled_subst_classes).run(graph):
             applied.append("primitive_subst")
             # Primitive subst ends Phase-1 for matched subgraphs — no eggsat needed
             return graph, applied

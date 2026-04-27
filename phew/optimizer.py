@@ -149,6 +149,7 @@ class Optimizer:
             enable_primitive_subst=True,
             enable_tensorops=self.enable_tensorops,
             enable_fusion=self.enable_fusion,
+            enabled_subst_classes=self.enabled_subst_classes,
         )
         search_trace.append(f"  applied: {applied or 'none'}")
 

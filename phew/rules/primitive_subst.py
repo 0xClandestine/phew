@@ -5,10 +5,11 @@ When a pattern matches, the subgraph search terminates for those nodes
 (fast.* primitives end Phase-1 search by construction).
 
 Patterns:
-  rms_norm  — x / sqrt(mean(x²) + eps) * weight → FastRMSNorm
-  layer_norm — (x - mean) / std * weight + bias  → FastLayerNorm
-  rope       — rotary position embedding pattern  → FastRoPE
-  sdpa       — softmax(Q@K.T * scale) @ V        → FastScaledDotProductAttention
+  rms_norm        — x / sqrt(mean(x²) + eps) * weight → FastRMSNorm
+  normed_matmul   — (x @ W) * rsqrt(mean(x²) + eps)  → fast_rms_norm(x) @ W
+  layer_norm      — (x - mean) / std * weight + bias  → FastLayerNorm
+  rope            — rotary position embedding pattern  → FastRoPE
+  sdpa            — softmax(Q@K.T * scale) @ V        → FastScaledDotProductAttention
 """
 
 from __future__ import annotations
@@ -24,12 +25,30 @@ class PrimitiveSubstPass:
 
     Each _match_* method searches the graph for the target pattern
     and returns True if it made a substitution.
+
+    Parameters
+    ----------
+    enabled_classes:
+        Set of SubstitutionClass values that are allowed.  Opt-in rules
+        (e.g. normed_matmul) are skipped unless their class is present.
+        Defaults to ``{SubstitutionClass.fp32_to_fp32}``.
     """
+
+    def __init__(self, enabled_classes: set | None = None) -> None:
+        from phew.verify import SubstitutionClass
+
+        if enabled_classes is None:
+            enabled_classes = {SubstitutionClass.fp32_to_fp32}
+        self.enabled_classes = enabled_classes
 
     def run(self, graph: "Graph") -> bool:
         """Run all matchers. Return True if any substitution was made."""
+        from phew.verify import SubstitutionClass
+
         changed = False
         changed |= self._match_rms_norm(graph)
+        if SubstitutionClass.normed_matmul in self.enabled_classes:
+            changed |= self._match_normed_matmul(graph)
         changed |= self._match_layer_norm(graph)
         changed |= self._match_rope(graph)
         changed |= self._match_sdpa(graph)
@@ -110,6 +129,103 @@ class PrimitiveSubstPass:
                 inputs=[x_node.id, weight_node.id],
             )
             graph.replace(node.id, new_node)
+            changed = True
+
+        return changed
+
+    # ------------------------------------------------------------------
+    # Normed matmul — (x @ W) * rsqrt(mean(x²) + eps) → rms_norm(x) @ W
+    #
+    # This pattern appears when the RMSNorm scale is applied *after* the
+    # weight projection rather than before (e.g. HyperConnection/HyperHead
+    # in DeepSeek-V4).  Both are equivalent because rsqrt(norm(x)) is a
+    # per-row scalar: (x @ W) * s = (x * s) @ W = rms_norm(x) @ W.
+    # ------------------------------------------------------------------
+
+    def _match_normed_matmul(self, graph: "Graph") -> bool:
+        """Match mul(matmul(x, W), rsqrt(add(mean(x²), eps))) → rms_norm(x) @ W."""
+        from phew.ir import Constant, Elementwise, FastRMSNorm, MatMul, Reduce
+
+        def _rsqrt_eps_chain(node):
+            """If node is rsqrt(add(mean(x*x), eps)), return (x_node, eps_value).
+            Returns (None, None) if the pattern doesn't match."""
+            if not (isinstance(node, Elementwise) and node.op == "rsqrt"):
+                return None, None
+            rsqrt_preds = graph.predecessors(node.id)
+            if not rsqrt_preds:
+                return None, None
+            add_node = rsqrt_preds[0]
+            if not (isinstance(add_node, Elementwise) and add_node.op == "add"):
+                return None, None
+            add_preds = graph.predecessors(add_node.id)
+            mean_node = next(
+                (p for p in add_preds if isinstance(p, Reduce) and p.op == "mean"), None
+            )
+            eps_node = next(
+                (p for p in add_preds if isinstance(p, Constant)), None
+            )
+            if mean_node is None:
+                return None, None
+            # mean(x * x) — the mean's predecessor should be mul(x, x)
+            mean_preds = graph.predecessors(mean_node.id)
+            if not mean_preds:
+                return None, None
+            sq_node = mean_preds[0]
+            if not (isinstance(sq_node, Elementwise) and sq_node.op in ("mul", "multiply")):
+                return None, None
+            sq_preds = graph.predecessors(sq_node.id)
+            if len(sq_preds) < 2 or sq_preds[0].id != sq_preds[1].id:
+                return None, None
+            x_node = sq_preds[0]
+            eps = float(eps_node.value) if eps_node is not None else 1e-5
+            return x_node, eps
+
+        changed = False
+        for node in list(graph.topo_order()):
+            if not (isinstance(node, Elementwise) and node.op in ("mul", "multiply")):
+                continue
+            preds = graph.predecessors(node.id)
+            if len(preds) < 2:
+                continue
+
+            matmul_node = None
+            rsqrt_node = None
+            for pred in preds:
+                if isinstance(pred, MatMul):
+                    matmul_node = pred
+                elif isinstance(pred, Elementwise) and pred.op == "rsqrt":
+                    rsqrt_node = pred
+
+            if matmul_node is None or rsqrt_node is None:
+                continue
+
+            x_norm, eps = _rsqrt_eps_chain(rsqrt_node)
+            if x_norm is None:
+                continue
+
+            # Confirm the matmul consumes the same x as the norm chain.
+            mm_preds = graph.predecessors(matmul_node.id)
+            if not mm_preds or mm_preds[0].id != x_norm.id:
+                continue
+
+            # Build: FastRMSNorm(x, weight=None) then MatMul(normed, W).
+            norm_node = graph.add(
+                FastRMSNorm(
+                    shape=x_norm.shape,
+                    dtype=x_norm.dtype,
+                    inputs=[x_norm.id],
+                    eps=eps,
+                )
+            )
+            w_id = matmul_node.inputs[1] if len(matmul_node.inputs) > 1 else matmul_node.inputs[0]
+            new_mm = MatMul(
+                shape=node.shape,
+                dtype=node.dtype,
+                inputs=[norm_node.id, w_id],
+                transpose_a=matmul_node.transpose_a,
+                transpose_b=matmul_node.transpose_b,
+            )
+            graph.replace(node.id, new_mm)
             changed = True
 
         return changed

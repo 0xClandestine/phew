@@ -250,7 +250,8 @@ class MLXCodegen:
 
             elif isinstance(node, FastRMSNorm):
                 vname = fresh()
-                lines.append(f"{vname} = mx.fast.rms_norm({ins[0]}, {ins[1]}, eps={node.eps})")
+                weight = ins[1] if len(ins) > 1 else "None"
+                lines.append(f"{vname} = mx.fast.rms_norm({ins[0]}, {weight}, eps={node.eps})")
 
             elif isinstance(node, FastLayerNorm):
                 vname = fresh()
