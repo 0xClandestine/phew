@@ -8,7 +8,10 @@ PHEW is an optimizer for MLX/Metal. It finds verified-equivalent rewrites of you
 phew lint path/to/model.py          # scan Python files for known patterns
 phew lint src/ --rule compile       # filter to one rule
 phew lint kernels.metal             # scan a .metal file
+phew lint src/ --json               # machine-readable output
 ```
+
+Output format: `file:line  rule  what  →  suggestion` — one issue per line, grep-able.
 
 **Python rules:**
 
@@ -65,6 +68,8 @@ phew run my_kernel.py --allow-fp16       # opt in to fp16 precision
 phew run my_kernel.py --allow-bf16       # opt in to bf16 precision
 phew run my_kernel.py --allow-quant      # opt in to 4-bit matmul quantization
 phew run my_kernel.py --strategy ilp     # joint ILP extraction (slower, sometimes better)
+phew run my_kernel.py --json             # machine-readable result (exit 1 if no speedup)
+phew run my_kernel.py --quiet            # suppress progress and search trace
 ```
 
 ### 3. Read the output
