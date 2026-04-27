@@ -1,6 +1,13 @@
-# PHEW
+<p align="center">
+  <h1 align="center">phew</h1>
+  <p align="center">Probably Hardly Ever Works — MLX optimizer for Apple Silicon</p>
+</p>
 
-**Probably Hardly Ever Works** — a search-based superoptimizer for MLX on Apple Silicon.
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Apple%20Silicon-black?logo=apple" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License">
+</p>
 
 Point it at working MLX code. It finds a faster equivalent, proves the equivalence, and hands it back. If it can't beat your baseline across every problem size with verified correctness, you get your original code unchanged. No silent miscompiles.
 
