@@ -525,9 +525,8 @@ def lint(path, rule):
         from rich.markup import escape
 
         color = rule_colors.get(issue.rule, "white")
-        console.print(
-            f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {escape(issue.message)}"
-        )
+        msg = escape(issue.message)
+        console.print(f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {msg}")
 
     total = len(issues)
     rule_counts: dict[str, int] = {}
