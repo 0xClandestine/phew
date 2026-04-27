@@ -682,14 +682,18 @@ def lint(path, rule, as_json):
         "unvectorized_loop": "cyan",
     }
 
-    current_file = None
     for issue in issues:
-        if issue.file != current_file:
-            current_file = issue.file
-            console.print(f"\n[bold]{issue.file}[/bold]")
         color = rule_colors.get(issue.rule, "white")
-        msg = escape(issue.message)
-        console.print(f"  [dim]{issue.line:>4}[/dim]  [{color}]{issue.rule:<16}[/{color}]  {msg}")
+        loc = f"{issue.file}:{issue.line}"
+        rule_col = f"[{color}]{issue.rule:<20}[/{color}]"
+        # Split on  →  to color the suggestion green
+        parts = issue.message.split("  →  ", 1)
+        if len(parts) == 2:
+            what, fix = escape(parts[0]), escape(parts[1])
+            msg = f"{what}  [dim]→[/dim]  [green]{fix}[/green]"
+        else:
+            msg = escape(issue.message)
+        console.print(f"[dim]{loc}[/dim]  {rule_col}  {msg}")
 
     total = len(issues)
     rule_counts: dict[str, int] = {}
