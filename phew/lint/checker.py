@@ -5,10 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from .rule import LintIssue, Rule
 from .compile import CompileRule
 from .normed_matmul import NormedMatmulRule
 from .rms_norm import RMSNormRule
+from .rule import LintIssue, Rule
 from .sdpa import SDPARule
 
 #: Canonical rule registry — add new rules here.

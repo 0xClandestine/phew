@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 
-from .rule import LintIssue, Rule
 from ._utils import is_rms_scalar
+from .rule import LintIssue, Rule
 
 
 class RMSNormRule(Rule):
@@ -25,12 +25,14 @@ class _Visitor(ast.NodeVisitor):
 
     def _add(self, line: int) -> None:
         if not any(i.line == line for i in self.issues):
-            self.issues.append(LintIssue(
-                file=self.filename,
-                line=line,
-                rule=RMSNormRule.id,
-                message="manual rms_norm  →  mx.fast.rms_norm(x, weight, eps=eps)",
-            ))
+            self.issues.append(
+                LintIssue(
+                    file=self.filename,
+                    line=line,
+                    rule=RMSNormRule.id,
+                    message="manual rms_norm  →  mx.fast.rms_norm(x, weight, eps=eps)",
+                )
+            )
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         if isinstance(node.op, ast.Mult):

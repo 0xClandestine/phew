@@ -80,13 +80,42 @@ def has_compile_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
-_MX_OPS = frozenset([
-    "matmul", "linear", "conv2d", "softmax", "sigmoid", "relu", "silu",
-    "gelu", "tanh", "exp", "log", "sqrt", "rsqrt", "mean", "sum", "max",
-    "argmax", "argmin", "sort", "scatter", "gather", "concatenate",
-    "reshape", "transpose", "broadcast_to", "pad", "slice",
-    "random", "zeros", "ones", "eye", "arange",
-])
+_MX_OPS = frozenset(
+    [
+        "matmul",
+        "linear",
+        "conv2d",
+        "softmax",
+        "sigmoid",
+        "relu",
+        "silu",
+        "gelu",
+        "tanh",
+        "exp",
+        "log",
+        "sqrt",
+        "rsqrt",
+        "mean",
+        "sum",
+        "max",
+        "argmax",
+        "argmin",
+        "sort",
+        "scatter",
+        "gather",
+        "concatenate",
+        "reshape",
+        "transpose",
+        "broadcast_to",
+        "pad",
+        "slice",
+        "random",
+        "zeros",
+        "ones",
+        "eye",
+        "arange",
+    ]
+)
 
 
 def node_uses_mx(node: ast.AST) -> bool:

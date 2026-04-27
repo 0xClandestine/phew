@@ -161,9 +161,7 @@ class PrimitiveSubstPass:
             mean_node = next(
                 (p for p in add_preds if isinstance(p, Reduce) and p.op == "mean"), None
             )
-            eps_node = next(
-                (p for p in add_preds if isinstance(p, Constant)), None
-            )
+            eps_node = next((p for p in add_preds if isinstance(p, Constant)), None)
             if mean_node is None:
                 return None, None
             # mean(x * x) — the mean's predecessor should be mul(x, x)

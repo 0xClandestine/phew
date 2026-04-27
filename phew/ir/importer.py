@@ -218,9 +218,7 @@ class _TracedArray:
                 dtype = Dtype.from_mlx(other.dtype)
             except AttributeError:
                 return self
-            param_node = Input(
-                shape=shape, dtype=dtype, attrs={"is_parameter": True}
-            )
+            param_node = Input(shape=shape, dtype=dtype, attrs={"is_parameter": True})
             self._graph.add(param_node)
             other = _TracedArray(param_node, self._graph)
 
@@ -1805,6 +1803,7 @@ def trace_to_graph(
     # import time — they reject _TracedArray inputs. Replace with raw Python
     # equivalents that route through the already-patched mx.* ops.
     import math as _math
+
     import mlx.nn as _nn
 
     _nn_patches = {

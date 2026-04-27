@@ -443,13 +443,35 @@ def _print_result(result) -> None:
 
 
 # ---------------------------------------------------------------------------
-# phew lint  (appended)
+# phew skill
 # ---------------------------------------------------------------------------
+
+
+@cli.command()
+def skill():
+    """Print the phew skill guide for Claude Code."""
+    import importlib.metadata
+    import importlib.resources
+
+    try:
+        version = f"v{importlib.metadata.version('phew-mlx')}"
+    except importlib.metadata.PackageNotFoundError:
+        version = "(dev)"
+
+    text = importlib.resources.files("phew").joinpath("SKILL.md").read_text()
+    console.print(text.replace("{version}", version))
+
+
+# ---------------------------------------------------------------------------
+# phew lint
+# ---------------------------------------------------------------------------
+
 
 @cli.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--rule", "-r", multiple=True,
-              help="Filter to rule(s): rms_norm, normed_matmul, sdpa, compile")
+@click.option(
+    "--rule", "-r", multiple=True, help="Filter to rule(s): rms_norm, normed_matmul, sdpa, compile"
+)
 def lint(path, rule):
     """Scan PATH for MLX inefficiency patterns.
 

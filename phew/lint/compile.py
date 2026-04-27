@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 
-from .rule import LintIssue, Rule
 from ._utils import has_compile_decorator, node_uses_mx
+from .rule import LintIssue, Rule
 
 
 class CompileRule(Rule):
@@ -34,15 +34,17 @@ class _Visitor(ast.NodeVisitor):
         if args and args[0].arg in ("self", "cls"):
             return
         if node_uses_mx(node):
-            self.issues.append(LintIssue(
-                file=self.filename,
-                line=node.lineno,
-                rule=CompileRule.id,
-                message=(
-                    f"def {node.name}() uses mx ops but has no @mx.compile"
-                    "  →  add @mx.compile for ~1.5–3× free speedup"
-                ),
-            ))
+            self.issues.append(
+                LintIssue(
+                    file=self.filename,
+                    line=node.lineno,
+                    rule=CompileRule.id,
+                    message=(
+                        f"def {node.name}() uses mx ops but has no @mx.compile"
+                        "  →  add @mx.compile for ~1.5–3× free speedup"
+                    ),
+                )
+            )
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._check(node)

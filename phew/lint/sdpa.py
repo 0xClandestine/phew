@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 
-from .rule import LintIssue, Rule
 from ._utils import contains, is_call
+from .rule import LintIssue, Rule
 
 
 class SDPARule(Rule):
@@ -39,13 +39,14 @@ class _Visitor(ast.NodeVisitor):
             and contains(node.left, _is_softmax)
             and contains(node.left, _is_matmul)
         ):
-            self.issues.append(LintIssue(
-                file=self.filename,
-                line=node.lineno,
-                rule=SDPARule.id,
-                message=(
-                    "manual SDPA  →  "
-                    "mx.fast.scaled_dot_product_attention(Q, K, V, scale=scale)"
-                ),
-            ))
+            self.issues.append(
+                LintIssue(
+                    file=self.filename,
+                    line=node.lineno,
+                    rule=SDPARule.id,
+                    message=(
+                        "manual SDPA  →  mx.fast.scaled_dot_product_attention(Q, K, V, scale=scale)"
+                    ),
+                )
+            )
         self.generic_visit(node)

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ast
 
-from .rule import LintIssue, Rule
 from ._utils import is_rms_scalar
+from .rule import LintIssue, Rule
 
 
 class NormedMatmulRule(Rule):
@@ -34,15 +34,17 @@ class _Visitor(ast.NodeVisitor):
                     and isinstance(other, ast.BinOp)
                     and isinstance(other.op, ast.MatMult)
                 ):
-                    self.issues.append(LintIssue(
-                        file=self.filename,
-                        line=node.lineno,
-                        rule=NormedMatmulRule.id,
-                        message=(
-                            "(x @ W) * rsqrt(mean(x²)+eps)"
-                            "  →  mx.fast.rms_norm(x, None, eps=eps) @ W"
-                            "  [opt-in: SubstitutionClass.normed_matmul]"
-                        ),
-                    ))
+                    self.issues.append(
+                        LintIssue(
+                            file=self.filename,
+                            line=node.lineno,
+                            rule=NormedMatmulRule.id,
+                            message=(
+                                "(x @ W) * rsqrt(mean(x²)+eps)"
+                                "  →  mx.fast.rms_norm(x, None, eps=eps) @ W"
+                                "  [opt-in: SubstitutionClass.normed_matmul]"
+                            ),
+                        )
+                    )
                     break
         self.generic_visit(node)
