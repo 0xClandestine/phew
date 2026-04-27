@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "phew-mlx"
-version = "0.2.4"
+version = "0.2.5"
 description = "Probably Hardly Ever Works — search-based superoptimizer for MLX/Metal"
 requires-python = ">=3.10"
 dependencies = [
     "mlx>=0.24.0",
     "numpy>=1.26.0",
-    "click>=8.1.0",
+    "click>=8.1.0,<9",
     "scipy>=1.12.0",      # ILP extraction via scipy.optimize.milp
     "egglog>=0.9.0",      # e-graph saturation
     "rich>=13.0.0",       # CLI output
