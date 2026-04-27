@@ -24,14 +24,24 @@ def run_all_passes(
     enable_primitive_subst: bool = True,
     enable_tensorops: bool = True,
     enable_fusion: bool = False,
+    enable_algebraic: bool = True,
 ) -> tuple["Graph", list[str]]:
     """Run graph-level passes. Return (graph, list_of_applied_pass_names)."""
+    from .algebraic import AlgebraicPass
     from .compile_boundaries import CompileBoundaryPass
     from .fusion import ElementwiseFusionPass
     from .primitive_subst import PrimitiveSubstPass
     from .tensorops import TensorOpsPass
 
     applied: list[str] = []
+
+    # Algebraic simplification runs first: eliminates redundant casts/transposes/reshapes
+    # before other passes run, reducing graph size and improving pattern matching.
+    if enable_algebraic:
+        before = len(graph)
+        AlgebraicPass().run(graph)
+        if len(graph) != before:
+            applied.append("algebraic")
 
     if enable_fusion:
         if ElementwiseFusionPass().run(graph):
