@@ -38,7 +38,6 @@ class QuantizationPass:
         """Mutate *graph* in place. Returns graph."""
         from phew.ir.ops import Constant, Input, MatMul, QuantizedMatMul
 
-        changed = False
         for node in list(graph.topo_order()):
             if not isinstance(node, MatMul):
                 continue
@@ -68,6 +67,5 @@ class QuantizationPass:
                 group_size=self.group_size,
             )
             graph.replace(node.id, qmatmul)
-            changed = True
 
         return graph
