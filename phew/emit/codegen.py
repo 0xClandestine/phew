@@ -25,7 +25,7 @@ class MLXCodegen:
 
     def emit(self, graph: "Graph", fn_name: str = "optimized") -> str:
         """Return Python source string for the optimized function."""
-        from phew.ir import Compile, Input
+        from phew.ir import Compile
 
         lines: list[str] = []
         lines.append("import mlx.core as mx")
