@@ -77,7 +77,26 @@ phew run    input.py [-o out.py]    # optimize and emit
 phew bench  input.py                # baseline benchmark only
 phew trace  input.py                # capture Metal GPU trace
 phew verify baseline.py opt.py      # verify equivalence standalone
+phew lint   path/                   # scan for inefficiency patterns (no harness needed)
 ```
+
+### phew lint
+
+Scans Python files statically for known MLX inefficiencies. No `input_factory`, no execution — just point it at a file or directory.
+
+```
+phew lint mlx_lm/models/
+phew lint model.py -r rms_norm,sdpa   # filter to specific rules
+```
+
+| Rule | Pattern | Suggestion |
+|---|---|---|
+| `rms_norm` | `x * rsqrt(mean(x²)+eps) * w` | `mx.fast.rms_norm(x, w, eps=eps)` |
+| `normed_matmul` | `(x @ W) * rsqrt(mean(x²)+eps)` | `mx.fast.rms_norm(x, None, eps=eps) @ W` |
+| `sdpa` | `softmax(Q @ K.T * s) @ V` | `mx.fast.scaled_dot_product_attention(Q, K, V, scale=s)` |
+| `compile` | standalone mx-op function, no `@mx.compile` | add `@mx.compile` |
+
+Catches inline single-expression patterns. Split-assignment form (`rsqrt = mx.rsqrt(...); result = (x @ W) * rsqrt`) requires the full optimizer.
 
 ---
 
