@@ -330,12 +330,14 @@ class MLXCodegen:
         inputs_str = f"[{', '.join(ins)}]"
         dtypes_str = "[" + ", ".join(f"mx.{d.to_mlx()}" for d in node.output_dtypes) + "]"
         tg = node.threadgroup
-        tmpl = str(
-            [
-                (k, f"mx.{v}" if isinstance(v, str) and not v.startswith("mx.") else v)
-                for k, v in node.template_params
-            ]
-        )
+        # Build template list with dtype values as bare `mx.*` expressions (not quoted strings).
+        tmpl_parts = []
+        for k, v in node.template_params:
+            if isinstance(v, str) and not v.startswith("mx."):
+                tmpl_parts.append(f'("{k}", mx.{v})')
+            else:
+                tmpl_parts.append(f'("{k}", {v!r})')
+        tmpl = "[" + ", ".join(tmpl_parts) + "]"
 
         n_outputs = len(node.output_shapes)
 

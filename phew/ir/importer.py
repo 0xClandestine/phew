@@ -210,6 +210,20 @@ class _TracedArray:
         return _TracedArray(node, self._graph)
 
     def __matmul__(self, other: "_TracedArray") -> "_TracedArray":
+        if not isinstance(other, _TracedArray):
+            # Real weight tensor (e.g. nn.Linear does x @ weight.T).
+            # Wrap as a parameter Input so downstream passes (quantization, etc.) can target it.
+            try:
+                shape = tuple(other.shape)
+                dtype = Dtype.from_mlx(other.dtype)
+            except AttributeError:
+                return self
+            param_node = Input(
+                shape=shape, dtype=dtype, attrs={"is_parameter": True}
+            )
+            self._graph.add(param_node)
+            other = _TracedArray(param_node, self._graph)
+
         if not self._node.shape or not other._node.shape:
             return self
         M = self._node.shape[-2] if len(self._node.shape) >= 2 else 1
@@ -229,10 +243,13 @@ class _TracedArray:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
-    def transpose(self, axes=None) -> "_TracedArray":
+    def transpose(self, *axes) -> "_TracedArray":
         ndim = len(self._node.shape)
-        if axes is None:
+        # Accept both .transpose(0,1,3,2) and .transpose([0,1,3,2]) / .transpose(None)
+        if len(axes) == 0 or (len(axes) == 1 and axes[0] is None):
             axes = tuple(range(ndim - 1, -1, -1))
+        elif len(axes) == 1 and hasattr(axes[0], "__iter__"):
+            axes = tuple(axes[0])
         axes = tuple(a % ndim for a in axes)
         new_shape = tuple(self._node.shape[a] for a in axes)
         node = Transpose(shape=new_shape, dtype=self._node.dtype, inputs=[self._node.id], axes=axes)
@@ -1784,12 +1801,36 @@ def trace_to_graph(
         _orig[name] = getattr(mx, name, None)
         setattr(mx, name, getattr(ctx, name))
 
+    # Patch mlx.nn activation functions that are @mx.compile-decorated at
+    # import time — they reject _TracedArray inputs. Replace with raw Python
+    # equivalents that route through the already-patched mx.* ops.
+    import math as _math
+    import mlx.nn as _nn
+
+    _nn_patches = {
+        "silu": lambda x: x * mx.sigmoid(x),
+        "relu": lambda x: mx.maximum(x, 0),
+        "gelu": lambda x: x * 0.5 * (1 + mx.erf(x / _math.sqrt(2))),
+        "gelu_approx": lambda x: x * mx.sigmoid(1.702 * x),
+        "softmax": lambda x, axis=-1: mx.softmax(x, axis=axis),
+        "sigmoid": lambda x: mx.sigmoid(x),
+        "log_softmax": lambda x, axis=-1: mx.log(mx.softmax(x, axis=axis)),
+        "relu6": lambda x: mx.minimum(mx.maximum(x, 0), 6),
+    }
+    _nn_orig = {}
+    for _name, _patch in _nn_patches.items():
+        if hasattr(_nn, _name):
+            _nn_orig[_name] = getattr(_nn, _name)
+            setattr(_nn, _name, _patch)
+
     global _TRACING_GRAPH
     _TRACING_GRAPH = graph
     try:
         result = fn(*proxy_args, **proxy_kwargs)
     finally:
         _TRACING_GRAPH = None
+        for _name, _orig_fn in _nn_orig.items():
+            setattr(_nn, _name, _orig_fn)
         for name, orig in _orig.items():
             if orig is not None:
                 setattr(mx, name, orig)

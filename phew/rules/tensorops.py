@@ -74,87 +74,59 @@ def has_tensorops_support() -> bool:
 # ---------------------------------------------------------------------------
 
 _TENSOROPS_SOURCE = """\
-// simdgroup_matrix GEMM: C[batch, M, N] = A[batch, M, K] @ B[K, N]
-// Grid:        (ceil(N/8), ceil(M/8), batch)
-// Threadgroup: (32, 1, 1) — one simdgroup per dispatch
-// Accumulates in float32; stores as T.
-//
-// simdgroup_matrix<float,8,8> API (Metal 3, M2+):
-//   simdgroup_load(mat, ptr, stride, offset, transpose=false)
-//   simdgroup_store(mat, ptr, stride, offset)
-//   simdgroup_multiply_accumulate(D, A, B, C) → D = A*B + C
+// mx.fast.metal_kernel body — no function signature needed; MLX generates it.
+// Template constants: T (dtype), M (rows), N (cols), K (inner dim)
+// Grid:        (ceil(N/8), ceil(M/8), batch)   threadgroup: (32, 1, 1)
+// Inputs:  a[batch*M*K], b[K*N]   Output: out[batch*M*N]
 
-kernel void simdgroup_gemm(
-    device const T*  a    [[buffer(0)]],
-    device const T*  b    [[buffer(1)]],
-    device       T*  out  [[buffer(2)]],
-    constant  uint&  M    [[buffer(3)]],
-    constant  uint&  N    [[buffer(4)]],
-    constant  uint&  K    [[buffer(5)]],
-    uint3  tg_pos   [[threadgroup_position_in_grid]],
-    uint   lane_id  [[thread_index_in_simdgroup]]
-) {
-    // Each threadgroup covers one 8x8 output tile.
-    const uint row0  = tg_pos.y * 8u;
-    const uint col0  = tg_pos.x * 8u;
-    const uint batch = tg_pos.z;
+const uint row8     = threadgroup_position_in_grid.y * 8u;
+const uint col8     = threadgroup_position_in_grid.x * 8u;
+const uint batch_i  = threadgroup_position_in_grid.z;
+const uint lane     = thread_index_in_simdgroup;
 
-    device const T* A = a + batch * M * K;
-    device const T* B = b;
-    device       T* C = out + batch * M * N;
+const uint a_off    = batch_i * (uint)M * (uint)K;
+const uint out_off  = batch_i * (uint)M * (uint)N;
 
-    // Shared buffers for type conversion T → float for simdgroup_load.
-    // 64 elements = one 8×8 tile.
-    threadgroup float a_shared[64];
-    threadgroup float b_shared[64];
-    threadgroup float c_shared[64];
+threadgroup float a_shared[64];
+threadgroup float b_shared[64];
+threadgroup float c_shared[64];
 
-    // Accumulator in float for numerical precision.
-    simdgroup_float8x8 acc = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+simdgroup_float8x8 acc = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
 
-    for (uint k0 = 0; k0 < K; k0 += 8u) {
-        // 32 lanes fill 64 floats using 2 passes.
-        for (uint pass = 0u; pass < 2u; ++pass) {
-            uint li   = pass * 32u + lane_id;
-            uint lr   = li / 8u;   // local row 0..7
-            uint lc   = li % 8u;   // local col 0..7
-
-            uint a_row = row0 + lr;
-            uint a_col = k0   + lc;
-            a_shared[li] = (a_row < M && a_col < K)
-                ? float(A[a_row * K + a_col]) : 0.0f;
-
-            uint b_row = k0   + lr;
-            uint b_col = col0 + lc;
-            b_shared[li] = (b_row < K && b_col < N)
-                ? float(B[b_row * N + b_col]) : 0.0f;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        simdgroup_float8x8 a_sg, b_sg;
-        simdgroup_load(a_sg, a_shared, 8u, ulong2(0, 0));
-        simdgroup_load(b_sg, b_shared, 8u, ulong2(0, 0));
-        simdgroup_multiply_accumulate(acc, a_sg, b_sg, acc);
-    }
-
-    // Store: convert float → T via threadgroup buffer.
-    simdgroup_store(acc, c_shared, 8u, ulong2(0, 0));
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
+for (uint k0 = 0u; k0 < (uint)K; k0 += 8u) {
     for (uint pass = 0u; pass < 2u; ++pass) {
-        uint li    = pass * 32u + lane_id;
-        uint lr    = li / 8u;
-        uint lc    = li % 8u;
-        uint c_row = row0 + lr;
-        uint c_col = col0 + lc;
-        if (c_row < M && c_col < N) {
-            C[c_row * N + c_col] = T(c_shared[li]);
-        }
+        uint li  = pass * 32u + lane;
+        uint lr  = li / 8u;
+        uint lc  = li % 8u;
+        uint ar  = row8 + lr, ac = k0 + lc;
+        a_shared[li] = (ar < (uint)M && ac < (uint)K)
+                       ? float(a[a_off + ar * (uint)K + ac]) : 0.0f;
+        uint br  = k0 + lr, bc = col8 + lc;
+        b_shared[li] = (br < (uint)K && bc < (uint)N)
+                       ? float(b[br * (uint)N + bc]) : 0.0f;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    simdgroup_float8x8 a_sg, b_sg;
+    simdgroup_load(a_sg, a_shared, 8u, ulong2(0, 0));
+    simdgroup_load(b_sg, b_shared, 8u, ulong2(0, 0));
+    simdgroup_multiply_accumulate(acc, a_sg, b_sg, acc);
+}
+
+simdgroup_store(acc, c_shared, 8u, ulong2(0, 0));
+threadgroup_barrier(mem_flags::mem_threadgroup);
+
+for (uint pass = 0u; pass < 2u; ++pass) {
+    uint li  = pass * 32u + lane;
+    uint lr  = li / 8u;
+    uint lc  = li % 8u;
+    uint cr  = row8 + lr, cc = col8 + lc;
+    if (cr < (uint)M && cc < (uint)N) {
+        out[out_off + cr * (uint)N + cc] = T(c_shared[li]);
     }
 }
 """
 
-_TENSOROPS_HEADER = "#include <metal_stdlib>\nusing namespace metal;\n"
+_TENSOROPS_HEADER = ""
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +155,12 @@ class TensorOpsPass:
             if M * N < MIN_MATMUL_SIZE:
                 continue
 
+            # K from first input's last dimension.
+            a_node = graph[node.inputs[0]] if node.inputs and node.inputs[0] in graph else None
+            K = int(a_node.shape[-1]) if a_node and a_node.shape else 0
+            if K == 0:
+                continue
+
             # Grid: one threadgroup per 8×8 output tile.
             # Batch = product of all dims except the last two.
             batch = 1
@@ -194,19 +172,24 @@ class TensorOpsPass:
                 batch,
             )
 
+            # Input shapes: a is [batch*M, K] flat, b is [K, N] flat.
+            a_shape = (batch * M, K)
+            b_shape = (K, N)
+
             metal_node = MetalKernel(
                 shape=node.shape,
                 dtype=node.dtype,
                 inputs=list(node.inputs),
                 source=_TENSOROPS_SOURCE,
                 header=_TENSOROPS_HEADER,
-                template_params=[("T", node.dtype.to_mlx())],
+                template_params=[("T", node.dtype.to_mlx()), ("M", M), ("N", N), ("K", K)],
                 threadgroup=(32, 1, 1),
                 grid=grid,
                 input_names=["a", "b"],
                 output_names=["out"],
                 output_shapes=[node.shape],
                 output_dtypes=[node.dtype],
+                input_shapes=[a_shape, b_shape],
             )
             graph.replace(node.id, metal_node)
             changed = True

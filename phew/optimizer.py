@@ -68,6 +68,7 @@ class Optimizer:
         extraction_strategy: str = "greedy",
         fn_name: str = "optimized",
         enable_fusion: bool = False,
+        enable_tensorops: bool = False,
     ) -> None:
         self.fn = fn
         self.input_factory = input_factory
@@ -76,6 +77,7 @@ class Optimizer:
         self.extraction_strategy = extraction_strategy
         self.fn_name = fn_name
         self.enable_fusion = enable_fusion
+        self.enable_tensorops = enable_tensorops
 
     def run(
         self,
@@ -145,7 +147,7 @@ class Optimizer:
             graph,
             enable_compile=True,
             enable_primitive_subst=True,
-            enable_tensorops=True,
+            enable_tensorops=self.enable_tensorops,
             enable_fusion=self.enable_fusion,
         )
         search_trace.append(f"  applied: {applied or 'none'}")
