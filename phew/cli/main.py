@@ -450,9 +450,15 @@ def _print_result(result) -> None:
 @cli.command()
 def upgrade():
     """Upgrade phew to the latest version."""
+    import shutil
     import subprocess
 
-    subprocess.run(["uv", "tool", "upgrade", "phew-mlx"], check=False)
+    if shutil.which("uv"):
+        subprocess.run(["uv", "tool", "upgrade", "phew-mlx"], check=False)
+    else:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "phew-mlx"], check=False
+        )
 
 
 # ---------------------------------------------------------------------------
