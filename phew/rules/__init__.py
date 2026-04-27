@@ -13,14 +13,18 @@ from .algebraic import AlgebraicPass
 from .compile_boundaries import CompileBoundaryPass
 from .fusion import ElementwiseFusionPass
 from .graph_passes import run_all_passes
+from .precision import PrecisionPass
 from .primitive_subst import PrimitiveSubstPass
+from .quantization import QuantizationPass
 from .tensorops import TensorOpsPass
 
 __all__ = [
     "AlgebraicPass",
+    "PrecisionPass",
     "PrimitiveSubstPass",
     "CompileBoundaryPass",
     "ElementwiseFusionPass",
+    "QuantizationPass",
     "TensorOpsPass",
     "run_all_passes",
 ]
