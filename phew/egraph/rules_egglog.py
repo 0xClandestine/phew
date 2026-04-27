@@ -115,9 +115,10 @@ def fused_ew_chain(op1: i64, op2: i64, a: Tensor) -> Tensor: ...
 def build_egraph(egraph, graph: "Graph") -> tuple:
     """Encode a phew Graph into egglog expressions.
 
-    Returns (root_expr, node_map) where:
-      root_expr  — egglog Expr for the output node
-      node_map   — dict mapping id(egglog_expr) → phew Node
+    Returns (root_expr, node_map, str_node_map) where:
+      root_expr    — egglog Expr for the output node
+      node_map     — dict mapping id(egglog_expr) → phew Node  (for cost model)
+      str_node_map — dict mapping str(egglog_expr) → phew Node  (for round-trip)
     """
     from egglog import i64 as ei64
 
@@ -138,7 +139,8 @@ def build_egraph(egraph, graph: "Graph") -> tuple:
         Transpose,
     )
 
-    node_map: dict[int, Node] = {}
+    node_map: dict[int, "Node"] = {}
+    str_node_map: dict[str, "Node"] = {}
     expr_cache: dict[int, object] = {}  # node_id → egglog expr
 
     def encode(node_id: int):
@@ -181,7 +183,13 @@ def build_egraph(egraph, graph: "Graph") -> tuple:
 
         egraph.register(expr)
         expr_cache[node_id] = expr
+        # id-keyed for cost model lookups during extraction
         node_map[id(expr)] = node
+        # str-keyed for round-trip reconstruction after extraction
+        try:
+            str_node_map[str(expr)] = node
+        except Exception:
+            pass
         return expr
 
     if graph.outputs:
@@ -191,7 +199,7 @@ def build_egraph(egraph, graph: "Graph") -> tuple:
             encode(node.id)
         root_expr = list(expr_cache.values())[-1] if expr_cache else None
 
-    return root_expr, node_map
+    return root_expr, node_map, str_node_map
 
 
 # ---------------------------------------------------------------------------
