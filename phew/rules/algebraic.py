@@ -141,6 +141,21 @@ class AlgebraicPass:
             return False
         inner_inp = graph[inner_inp_id]
 
+        # Only collapse when both operations are true reshapes: the element
+        # count must be identical at every stage.  broadcast_to() is also
+        # encoded as a Reshape node but *changes* the element count, so
+        # merging it with a preceding reshape would produce an invalid op.
+        def _numel(shape):
+            n = 1
+            for s in shape:
+                n *= s
+            return n
+
+        if _numel(inner_inp.shape) != _numel(inp.new_shape):
+            return False
+        if _numel(inp.new_shape) != _numel(node.new_shape):
+            return False
+
         node.inputs = [inner_inp_id]
         node.input_shape = inner_inp.shape
         if not graph.successors(inp.id):

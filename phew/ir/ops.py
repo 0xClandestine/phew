@@ -187,6 +187,19 @@ class FastScaledDotProductAttention(Node):
     mask: str = "none"  # "none" | "causal" | "additive"
 
 
+@dataclass
+class FastQuantizedScaledDotProductAttention(Node):
+    """mlx.core.fast.quantized_scaled_dot_product_attention
+
+    inputs: [queries, keys, values, scale_k, biases_k, scale_v, biases_v]
+    Output shape == queries.shape.
+    """
+
+    scale: float = 1.0
+    bits: int = 4
+    group_size: int = 64
+
+
 # ---------------------------------------------------------------------------
 # Quantization
 # ---------------------------------------------------------------------------
