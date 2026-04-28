@@ -48,6 +48,9 @@ def test_dtype_itemsize():
     assert Dtype.float32.itemsize == 4
     assert Dtype.float16.itemsize == 2
     assert Dtype.int8.itemsize == 1
+    assert Dtype.uint8.itemsize == 1
+    assert Dtype.uint16.itemsize == 2
+    assert Dtype.uint32.itemsize == 4
 
 
 def test_memdep_flags():
