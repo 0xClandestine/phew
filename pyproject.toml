@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "phew-mlx"
-version = "0.2.8"
+version = "0.2.9"
 description = "Probably Hardly Ever Works — search-based superoptimizer for MLX/Metal"
 requires-python = ">=3.10"
 dependencies = [

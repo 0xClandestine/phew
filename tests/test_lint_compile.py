@@ -38,6 +38,26 @@ def forward(x):
     assert _issues(src) == []
 
 
+def test_partial_mx_compile_skipped():
+    """@partial(mx.compile, shapeless=True) must not trigger the rule."""
+    src = """
+@partial(mx.compile, shapeless=True)
+def swiglu(gate, x):
+    return nn.silu(gate) * x
+"""
+    assert _issues(src) == []
+
+
+def test_partial_compile_with_random_state_skipped():
+    """@partial(mx.compile, inputs=mx.random.state, ...) must not trigger the rule."""
+    src = """
+@partial(mx.compile, inputs=mx.random.state, outputs=mx.random.state)
+def sample(logits):
+    return mx.random.categorical(logits)
+"""
+    assert _issues(src) == []
+
+
 def test_private_function_skipped():
     src = """
 def _forward(x):

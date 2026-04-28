@@ -152,6 +152,10 @@ class _TracedArray:
         return self._node.shape
 
     @property
+    def ndim(self):
+        return len(self._node.shape)
+
+    @property
     def dtype(self):
         return self._node.dtype
 
@@ -842,7 +846,11 @@ class _TracingContext:
         from phew.ir.dtype import Dtype as _Dtype
 
         node = Elementwise(
-            shape=x.shape, dtype=_Dtype.int32, inputs=[x._node.id], op="argpartition"
+            shape=x.shape,
+            dtype=_Dtype.int32,
+            inputs=[x._node.id],
+            op="argpartition",
+            attrs={"kth": kth, "axis": axis},
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1542,8 +1550,8 @@ class _TracingContext:
     def sort(self, x, axis=-1, **_):
         if not isinstance(x, _TracedArray):
             return x
-        node = Reduce(
-            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="sort", axes=(), keepdims=True
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="sort", attrs={"axis": axis}
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1553,13 +1561,34 @@ class _TracingContext:
             return x
         from phew.ir.dtype import Dtype as _Dtype
 
-        node = Reduce(
+        node = Elementwise(
             shape=x.shape,
             dtype=_Dtype.int32,
             inputs=[x._node.id],
             op="argsort",
-            axes=(),
-            keepdims=True,
+            attrs={"axis": axis},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def tril(self, x, k=0, **_):
+        if not isinstance(x, _TracedArray):
+            import mlx.core as _mx
+
+            return _mx.tril(x, k=k)
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="tril", attrs={"k": k}
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def triu(self, x, k=0, **_):
+        if not isinstance(x, _TracedArray):
+            import mlx.core as _mx
+
+            return _mx.triu(x, k=k)
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="triu", attrs={"k": k}
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1755,6 +1784,8 @@ def trace_to_graph(
         "sort",
         "argsort",
         "topk",
+        "tril",
+        "triu",
         "partition",
         "cumsum",
         "cumprod",

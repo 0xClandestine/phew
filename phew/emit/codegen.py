@@ -40,11 +40,15 @@ class MLXCodegen:
         # emitted function's positional parameters match how the caller passes args.
         inputs = graph.inputs()
         args = ", ".join(n.name or f"x{i}" for i, n in enumerate(inputs))
+        # Accept extra positional/keyword args so the emitted function can be
+        # called with the original input_factory args even when some non-array
+        # arguments (e.g. Python int scalars) were baked in as constants.
+        extra = (", " if args else "") + "*_, **__"
 
         if has_compile:
             lines.append("@mx.compile")
 
-        lines.append(f"def {fn_name}({args}):")
+        lines.append(f"def {fn_name}({args}{extra}):")
 
         body = self._emit_body(graph)
         for line in body:
@@ -125,6 +129,10 @@ class MLXCodegen:
                     # softmax takes axis as a scalar, not a list
                     ax = axes[0] if axes and len(axes) == 1 else axes
                     lines.append(f"{vname} = mx.softmax({ins[0]}, axis={ax})")
+                elif node.op in ("sort", "argsort"):
+                    # sort/argsort do not accept keepdims
+                    ax = node.attrs.get("axis", -1)
+                    lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={ax!r})")
                 else:
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={axes}, keepdims={kd})")
 
@@ -147,6 +155,16 @@ class MLXCodegen:
                     lines.append(f"{vname} = {ins[0]} - {ins[1]}")
                 elif op == "div" and len(ins) == 2:
                     lines.append(f"{vname} = {ins[0]} / {ins[1]}")
+                elif op == "argpartition":
+                    kth = node.attrs.get("kth", 0)
+                    axis = node.attrs.get("axis", -1)
+                    lines.append(f"{vname} = mx.argpartition({ins[0]}, kth={kth!r}, axis={axis!r})")
+                elif op in ("sort", "argsort"):
+                    axis = node.attrs.get("axis", -1)
+                    lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")
+                elif op in ("tril", "triu"):
+                    k = node.attrs.get("k", 0)
+                    lines.append(f"{vname} = mx.{op}({ins[0]}, k={k!r})")
                 elif len(ins) == 1:
                     lines.append(f"{vname} = mx.{op}({ins[0]})")
                 else:

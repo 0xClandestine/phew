@@ -11,6 +11,8 @@ class Dtype(Enum):
     int16 = "int16"
     int8 = "int8"
     uint8 = "uint8"
+    uint16 = "uint16"
+    uint32 = "uint32"
     bool_ = "bool"
 
     @property
@@ -23,6 +25,8 @@ class Dtype(Enum):
             "int16": 2,
             "int8": 1,
             "uint8": 1,
+            "uint16": 2,
+            "uint32": 4,
             "bool": 1,
         }
         return _sizes[self.value]
@@ -45,6 +49,8 @@ class Dtype(Enum):
             "int16": "int16",
             "int8": "int8",
             "uint8": "uint8",
+            "uint16": "uint16",
+            "uint32": "uint32",
             "bool": "bool_",
         }
         return _map[self.value]
@@ -61,6 +67,8 @@ class Dtype(Enum):
             mx.int16: Dtype.int16,
             mx.int8: Dtype.int8,
             mx.uint8: Dtype.uint8,
+            mx.uint16: Dtype.uint16,
+            mx.uint32: Dtype.uint32,
             mx.bool_: Dtype.bool_,
         }
         return _map[mlx_dtype]

@@ -133,6 +133,13 @@ def has_compile_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
                 return True
             if is_call(dec, "compile"):
                 return True
+            # @partial(mx.compile, ...) or @partial(compile, ...)
+            if is_call(dec, "partial") and dec.args:  # type: ignore[union-attr]
+                first = dec.args[0]  # type: ignore[union-attr]
+                if isinstance(first, ast.Attribute) and first.attr == "compile":
+                    return True
+                if isinstance(first, ast.Name) and first.id == "compile":
+                    return True
     return False
 
 
