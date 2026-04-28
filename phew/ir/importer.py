@@ -546,6 +546,13 @@ class _TracingContext:
     def expand_dims(self, x, axis, **_):
         if not isinstance(x, _TracedArray):
             return x
+        # MLX allows axis to be a list/tuple of ints — apply each in sorted order
+        # (axes are specified as positions in the final output shape, so sorting
+        # ascending and applying one-by-one preserves semantics).
+        if isinstance(axis, (list, tuple)):
+            for ax in sorted(axis):
+                x = self.expand_dims(x, ax)
+            return x
         ndim = len(x.shape) + 1
         axis = axis % ndim
         new_shape = x.shape[:axis] + (1,) + x.shape[axis:]
@@ -1061,7 +1068,18 @@ class _TracingContext:
     def roll(self, x, shift, axis=None, **_):
         if not isinstance(x, _TracedArray):
             return x
-        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="roll")
+        inputs = [x._node.id]
+        shift_val = shift
+        if isinstance(shift, _TracedArray):
+            inputs.append(shift._node.id)
+            shift_val = None
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=inputs,
+            op="roll",
+            attrs={"shift": shift_val, "axis": axis},
+        )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
@@ -1694,6 +1712,72 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    # ------------------------------------------------------------------
+    # mx.fast.* primitives
+    # ------------------------------------------------------------------
+
+    def rms_norm(self, x, weight=None, eps=1e-5, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from .ops import FastRMSNorm as _FastRMSNorm
+
+        inputs = [x._node.id]
+        if isinstance(weight, _TracedArray):
+            inputs.append(weight._node.id)
+        node = _FastRMSNorm(shape=x.shape, dtype=x.dtype, inputs=inputs, eps=float(eps))
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def scaled_dot_product_attention(self, q, k, v, scale=1.0, mask=None, **_):
+        if not isinstance(q, _TracedArray):
+            return q
+        from .ops import FastScaledDotProductAttention as _FSDPA
+
+        inputs = [q._node.id, k._node.id, v._node.id]
+        mask_type = "none"
+        if isinstance(mask, _TracedArray):
+            inputs.append(mask._node.id)
+            mask_type = "additive"
+        elif isinstance(mask, str):
+            mask_type = mask
+        node = _FSDPA(
+            shape=q.shape, dtype=q.dtype, inputs=inputs, scale=float(scale), mask=mask_type
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def rope(self, x, dims, *, traditional=False, base=10000.0, scale=1.0, offset=0, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from .ops import FastRoPE as _FastRoPE
+
+        node = _FastRoPE(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            dims=int(dims),
+            traditional=bool(traditional),
+            base=float(base),
+            scale=float(scale),
+            offset=int(offset),
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def layer_norm(self, x, weight=None, bias=None, *, eps=1e-5, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from .ops import FastLayerNorm as _FastLayerNorm
+
+        inputs = [x._node.id]
+        if isinstance(weight, _TracedArray):
+            inputs.append(weight._node.id)
+        if isinstance(bias, _TracedArray):
+            inputs.append(bias._node.id)
+        node = _FastLayerNorm(shape=x.shape, dtype=x.dtype, inputs=inputs, eps=float(eps))
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def eval(self, *args, **_):
         pass  # no-op in tracing
 
@@ -1892,12 +1976,25 @@ def trace_to_graph(
             _nn_orig[_name] = getattr(_nn, _name)
             setattr(_nn, _name, _patch)
 
+    # Patch mlx.core.fast so that fast.rms_norm / sdpa / rope / layer_norm
+    # are intercepted and recorded as IR nodes during tracing.
+    import mlx.core.fast as _fast
+
+    _fast_patch_names = ["rms_norm", "scaled_dot_product_attention", "rope", "layer_norm"]
+    _fast_orig = {}
+    for _fname in _fast_patch_names:
+        if hasattr(_fast, _fname):
+            _fast_orig[_fname] = getattr(_fast, _fname)
+            setattr(_fast, _fname, getattr(ctx, _fname))
+
     global _TRACING_GRAPH
     _TRACING_GRAPH = graph
     try:
         result = fn(*proxy_args, **proxy_kwargs)
     finally:
         _TRACING_GRAPH = None
+        for _fname, _orig_fn in _fast_orig.items():
+            setattr(_fast, _fname, _orig_fn)
         for _name, _orig_fn in _nn_orig.items():
             setattr(_nn, _name, _orig_fn)
         for name, orig in _orig.items():
