@@ -65,6 +65,7 @@ class MLXCodegen:
             Constant,
             Elementwise,
             FastLayerNorm,
+            FastQuantizedScaledDotProductAttention,
             FastRMSNorm,
             FastRoPE,
             FastScaledDotProductAttention,
@@ -310,6 +311,15 @@ class MLXCodegen:
                 lines.append(
                     f"{vname} = mx.fast.scaled_dot_product_attention("
                     f"{ins[0]}, {ins[1]}, {ins[2]}, scale={node.scale})"
+                )
+
+            elif isinstance(node, FastQuantizedScaledDotProductAttention):
+                vname = fresh()
+                # inputs: [q, k, v, scale_k, biases_k, scale_v, biases_v]
+                lines.append(
+                    f"{vname} = mx.fast.quantized_scaled_dot_product_attention("
+                    f"{', '.join(ins)}, "
+                    f"scale={node.scale}, bits={node.bits}, group_size={node.group_size})"
                 )
 
             elif isinstance(node, QuantizedMatMul):

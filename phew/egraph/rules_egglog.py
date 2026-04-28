@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # Egglog type and function definitions (module-level so get_type_hints works)
 # ---------------------------------------------------------------------------
 
-from egglog import Expr, function, i64, rewrite, vars_
+from egglog import Expr, eq, function, i64, rewrite, rule, set_, union, vars_
 
 
 class Tensor(Expr):
@@ -45,6 +45,17 @@ class TensorList(Expr):
 
 @function
 def named_tensor(n: i64) -> Tensor: ...
+
+
+# Shape facts for the last two matrix dimensions.
+# Populated by build_egraph for every node; derived by propagation rules for
+# new matmul expressions created during saturation.
+@function
+def mat_rows(t: Tensor) -> i64: ...
+
+
+@function
+def mat_cols(t: Tensor) -> i64: ...
 
 
 @function
@@ -190,6 +201,22 @@ def build_egraph(egraph, graph: "Graph") -> tuple:
             str_node_map[str(expr)] = node
         except Exception:
             pass
+
+        # Register shape facts so conditional matmul rules can fire correctly.
+        # mat_rows / mat_cols track the last two dimensions of the node's shape.
+        # i64 is a primitive sort — use set_() not union().
+        sh = node.shape
+        if sh and len(sh) >= 2:
+            egraph.register(
+                set_(mat_rows(expr)).to(ei64(sh[-2])),
+                set_(mat_cols(expr)).to(ei64(sh[-1])),
+            )
+        elif sh and len(sh) == 1:
+            egraph.register(
+                set_(mat_rows(expr)).to(ei64(1)),
+                set_(mat_cols(expr)).to(ei64(sh[-1])),
+            )
+
         return expr
 
     if graph.outputs:
@@ -214,8 +241,65 @@ def _register_algebraic_rules(egraph) -> None:
         rewrite(a + b).to(b + a),
         rewrite((a + b) + c).to(a + (b + c)),
         rewrite(a * b).to(b * a),
-        rewrite(matmul(matmul(a, b), c)).to(matmul(a, matmul(b, c))),
-        rewrite(matmul(a, matmul(b, c))).to(matmul(matmul(a, b), c)),
+    )
+
+    # Shape-propagation rule for matmul: when matmul(a, b) already exists and we
+    # know the shapes of a and b, derive the shape of the result.
+    # Guard on `eq(ab_sp).to(matmul(a, b))` so we MATCH an existing matmul rather
+    # than CREATE a new one for every shape-compatible pair of tensors.
+    (ab_sp,) = vars_("ab_sp", Tensor)
+    m, k, n = vars_("m k n", i64)
+    egraph.register(
+        rule(
+            eq(ab_sp).to(matmul(a, b)),
+            eq(mat_rows(a)).to(m),
+            eq(mat_cols(a)).to(k),
+            eq(mat_rows(b)).to(k),
+            eq(mat_cols(b)).to(n),
+        ).then(
+            set_(mat_rows(ab_sp)).to(m),
+            set_(mat_cols(ab_sp)).to(n),
+        )
+    )
+
+    # Matmul associativity: (A @ B) @ C  ↔  A @ (B @ C)
+    # Both directions require the input expression to already exist so the rule
+    # expands an existing matmul rather than generating new ones for every
+    # shape-compatible triple, which would cause unbounded e-graph growth.
+    ab_v, abc_l = vars_("ab_v abc_l", Tensor)
+    bc_v, abc_r = vars_("bc_v abc_r", Tensor)
+    m2, k2, n2, p2 = vars_("m2 k2 n2 p2", i64)
+
+    # (a @ b) @ c  →  a @ (b @ c)
+    egraph.register(
+        rule(
+            eq(ab_v).to(matmul(a, b)),
+            eq(abc_l).to(matmul(ab_v, c)),
+            eq(mat_rows(a)).to(m2),
+            eq(mat_cols(a)).to(k2),
+            eq(mat_rows(b)).to(k2),
+            eq(mat_cols(b)).to(n2),
+            eq(mat_rows(c)).to(n2),
+            eq(mat_cols(c)).to(p2),
+        ).then(
+            union(abc_l).with_(matmul(a, matmul(b, c))),
+        )
+    )
+
+    # a @ (b @ c)  →  (a @ b) @ c
+    egraph.register(
+        rule(
+            eq(bc_v).to(matmul(b, c)),
+            eq(abc_r).to(matmul(a, bc_v)),
+            eq(mat_rows(a)).to(m2),
+            eq(mat_cols(a)).to(k2),
+            eq(mat_rows(b)).to(k2),
+            eq(mat_cols(b)).to(n2),
+            eq(mat_rows(c)).to(n2),
+            eq(mat_cols(c)).to(p2),
+        ).then(
+            union(abc_r).with_(matmul(matmul(a, b), c)),
+        )
     )
 
 

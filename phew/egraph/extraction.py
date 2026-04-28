@@ -209,8 +209,25 @@ class _GraphReconstructor:
             if orig:
                 self._cache[expr_str] = orig
                 return orig
-            # Can't safely create a new MatMul without knowing the output shape
-            return self._fallback(expr_str)
+            # Compute output shape from input shapes.
+            # Batched matmul: (..., M, K) @ (..., K, N) → (..., M, N).
+            # Reject if the inner dimension doesn't match.
+            a_sh, b_sh = a.shape, b.shape
+            if not a_sh or not b_sh or len(b_sh) < 2:
+                return self._fallback(expr_str)
+            if a_sh[-1] != b_sh[-2]:
+                return self._fallback(expr_str)
+            # Batch dims: use the longer of the two prefixes (broadcast-aware)
+            a_batch = a_sh[:-2] if len(a_sh) >= 2 else ()
+            b_batch = b_sh[:-2]
+            batch = a_batch if len(a_batch) >= len(b_batch) else b_batch
+            out_shape = batch + (a_sh[-2] if len(a_sh) >= 2 else 1, b_sh[-1])
+            from phew.ir.ops import MatMul
+
+            new_node = MatMul(shape=out_shape, dtype=a.dtype, inputs=[a.id, b.id])
+            self.new_graph.add(new_node)
+            self._cache[expr_str] = new_node
+            return new_node
 
         # --- fused_ew_chain: fall back to original -----------------------
         if fn_name == "fused_ew_chain":
@@ -269,7 +286,6 @@ class Extractor:
         original_graph: "Graph",
         str_node_map: "dict[str, Node] | None" = None,
     ) -> ExtractionResult:
-
         from phew.cost import CostModel
 
         cost_model = CostModel()

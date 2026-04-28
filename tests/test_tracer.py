@@ -1,5 +1,10 @@
 """Tests for phew/ir/importer.py tracer fixes."""
 
+import mlx.core.fast as _fast_module
+import pytest
+
+_has_qsdpa = hasattr(_fast_module, "quantized_scaled_dot_product_attention")
+
 
 def test_expand_dims_list_axis():
     """expand_dims with a list of axes should create multi-dim expansion."""
@@ -141,3 +146,38 @@ def test_rms_norm_rule_scalar_weight_uses_none():
     found = [n for n in g._nodes.values() if isinstance(n, FastRMSNorm)]
     assert found, "FastRMSNorm should have been created"
     assert len(found[0].inputs) == 1, "Scalar weight should be excluded; weight=None"
+
+
+@pytest.mark.skipif(
+    not _has_qsdpa, reason="MLX version lacks quantized_scaled_dot_product_attention"
+)
+def test_fast_quantized_sdpa_traced():
+    """mx.fast.quantized_scaled_dot_product_attention is intercepted during tracing."""
+    import mlx.core as mx
+    import mlx.core.fast as fast
+
+    from phew.ir.importer import trace_to_graph
+    from phew.ir.ops import FastQuantizedScaledDotProductAttention
+
+    B, H, S, D = 1, 4, 8, 16
+    groups = D // 64 if D >= 64 else 1
+    packed_cols = D * 4 // 8  # bits=4
+
+    def fn(q, k, v, sk, bk, sv, bv):
+        return fast.quantized_scaled_dot_product_attention(
+            q, k, v, sk, bk, sv, bv, scale=0.25, bits=4, group_size=D
+        )
+
+    q = mx.zeros((B, H, S, D))
+    k = mx.zeros((B, H, S, packed_cols), dtype=mx.uint32)
+    v = mx.zeros((B, H, S, packed_cols), dtype=mx.uint32)
+    sk = mx.ones((B, H, S, groups))
+    bk = mx.zeros((B, H, S, groups))
+    sv = mx.ones((B, H, S, groups))
+    bv = mx.zeros((B, H, S, groups))
+
+    g = trace_to_graph(fn, [q, k, v, sk, bk, sv, bv], {})
+    out_node = g[g.outputs[0]]
+    assert isinstance(out_node, FastQuantizedScaledDotProductAttention)
+    assert out_node.scale == 0.25
+    assert out_node.bits == 4

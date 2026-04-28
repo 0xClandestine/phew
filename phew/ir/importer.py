@@ -1764,6 +1764,41 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def quantized_scaled_dot_product_attention(
+        self,
+        q,
+        k,
+        v,
+        scale_k,
+        biases_k,
+        scale_v,
+        biases_v,
+        *,
+        scale=1.0,
+        bits=4,
+        group_size=64,
+        **_,
+    ):
+        if not isinstance(q, _TracedArray):
+            return q
+        from .ops import FastQuantizedScaledDotProductAttention as _FQSDPA
+
+        inputs = [
+            x._node.id
+            for x in (q, k, v, scale_k, biases_k, scale_v, biases_v)
+            if isinstance(x, _TracedArray)
+        ]
+        node = _FQSDPA(
+            shape=q.shape,
+            dtype=q.dtype,
+            inputs=inputs,
+            scale=float(scale),
+            bits=int(bits),
+            group_size=int(group_size),
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def layer_norm(self, x, weight=None, bias=None, *, eps=1e-5, **_):
         if not isinstance(x, _TracedArray):
             return x
@@ -1980,7 +2015,13 @@ def trace_to_graph(
     # are intercepted and recorded as IR nodes during tracing.
     import mlx.core.fast as _fast
 
-    _fast_patch_names = ["rms_norm", "scaled_dot_product_attention", "rope", "layer_norm"]
+    _fast_patch_names = [
+        "rms_norm",
+        "scaled_dot_product_attention",
+        "quantized_scaled_dot_product_attention",
+        "rope",
+        "layer_norm",
+    ]
     _fast_orig = {}
     for _fname in _fast_patch_names:
         if hasattr(_fast, _fname):
