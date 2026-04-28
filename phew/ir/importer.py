@@ -206,6 +206,12 @@ class _TracedArray:
     def __rtruediv__(self, other):
         return self._binop(other, "div")
 
+    def __mod__(self, other):
+        return self._binop(other, "remainder")
+
+    def __rmod__(self, other):
+        return self._binop(other, "remainder")
+
     def __neg__(self):
         node = Elementwise(
             shape=self._node.shape, dtype=self._node.dtype, inputs=[self._node.id], op="negative"
@@ -855,6 +861,35 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def quantized_matmul(self, x, w, scales, biases, transpose=True, bits=4, group_size=64, **_):
+        if not isinstance(x, _TracedArray):
+            import mlx.core as _mx
+
+            return _mx.quantized_matmul(
+                x, w, scales, biases, transpose=transpose, bits=bits, group_size=group_size
+            )
+        from phew.ir.dtype import Dtype as _Dtype
+        from phew.ir.ops import QuantizedMatMul as _QMM
+
+        # Output dim: with transpose=True (default), w rows = out_features
+        w_node = w._node if isinstance(w, _TracedArray) else None
+        out_dim = w_node.shape[0] if (w_node and w_node.shape) else 1
+        out_shape = x.shape[:-1] + (out_dim,)
+        inp_ids = [x._node.id]
+        for arr in (w, scales, biases):
+            if isinstance(arr, _TracedArray):
+                inp_ids.append(arr._node.id)
+        node = _QMM(
+            shape=out_shape,
+            dtype=_Dtype.float16,
+            inputs=inp_ids,
+            bits=bits,
+            group_size=group_size,
+            attrs={"transpose": transpose},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def take_along_axis(self, x, indices, axis, **_):
         if not isinstance(x, _TracedArray):
             import mlx.core as _mx
@@ -863,7 +898,11 @@ class _TracingContext:
         idx = indices if isinstance(indices, _TracedArray) else indices
         idx_node_id = idx._node.id if isinstance(idx, _TracedArray) else x._node.id
         node = Elementwise(
-            shape=x.shape, dtype=x.dtype, inputs=[x._node.id, idx_node_id], op="take_along_axis"
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id, idx_node_id],
+            op="take_along_axis",
+            attrs={"axis": axis},
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1627,8 +1666,8 @@ class _TracingContext:
     def cumsum(self, x, axis=None, **_):
         if not isinstance(x, _TracedArray):
             return x
-        node = Reduce(
-            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="cumsum", axes=(), keepdims=True
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="cumsum", attrs={"axis": axis}
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1636,8 +1675,8 @@ class _TracingContext:
     def cumprod(self, x, axis=None, **_):
         if not isinstance(x, _TracedArray):
             return x
-        node = Reduce(
-            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="cumprod", axes=(), keepdims=True
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="cumprod", attrs={"axis": axis}
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1645,13 +1684,12 @@ class _TracingContext:
     def logcumsumexp(self, x, axis=None, reverse=False, **_):
         if not isinstance(x, _TracedArray):
             return x
-        node = Reduce(
+        node = Elementwise(
             shape=x.shape,
             dtype=x.dtype,
             inputs=[x._node.id],
             op="logcumsumexp",
-            axes=(),
-            keepdims=True,
+            attrs={"axis": axis, "reverse": reverse},
         )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
@@ -1733,6 +1771,7 @@ def trace_to_graph(
         "sin",
         "stack",
         "argpartition",
+        "quantized_matmul",
         "take_along_axis",
         # unary
         "abs",
