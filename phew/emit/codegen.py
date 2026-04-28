@@ -165,6 +165,18 @@ class MLXCodegen:
                 elif op in ("tril", "triu"):
                     k = node.attrs.get("k", 0)
                     lines.append(f"{vname} = mx.{op}({ins[0]}, k={k!r})")
+                elif op == "take_along_axis":
+                    axis = node.attrs.get("axis", -1)
+                    lines.append(f"{vname} = mx.take_along_axis({ins[0]}, {ins[1]}, axis={axis!r})")
+                elif op in ("cumsum", "cumprod"):
+                    axis = node.attrs.get("axis", None)
+                    lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")
+                elif op == "logcumsumexp":
+                    axis = node.attrs.get("axis", None)
+                    reverse = node.attrs.get("reverse", False)
+                    lines.append(
+                        f"{vname} = mx.logcumsumexp({ins[0]}, axis={axis!r}, reverse={reverse!r})"
+                    )
                 elif len(ins) == 1:
                     lines.append(f"{vname} = mx.{op}({ins[0]})")
                 else:
@@ -295,10 +307,17 @@ class MLXCodegen:
 
             elif isinstance(node, QuantizedMatMul):
                 vname = fresh()
-                lines.append(
-                    f"{vname} = mx.quantized_matmul({ins[0]}, {ins[1]}, "
-                    f"bits={node.bits}, group_size={node.group_size})"
-                )
+                transpose = node.attrs.get("transpose", True)
+                if len(ins) >= 4:
+                    lines.append(
+                        f"{vname} = mx.quantized_matmul({ins[0]}, {ins[1]}, {ins[2]}, {ins[3]}, "
+                        f"transpose={transpose!r}, bits={node.bits}, group_size={node.group_size})"
+                    )
+                else:
+                    lines.append(
+                        f"{vname} = mx.quantized_matmul({ins[0]}, {ins[1]}, "
+                        f"transpose={transpose!r}, bits={node.bits}, group_size={node.group_size})"
+                    )
 
             elif isinstance(node, MetalKernel):
                 vname = fresh("kernel")
