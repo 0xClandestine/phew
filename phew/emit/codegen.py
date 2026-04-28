@@ -168,6 +168,13 @@ class MLXCodegen:
                 elif op == "take_along_axis":
                     axis = node.attrs.get("axis", -1)
                     lines.append(f"{vname} = mx.take_along_axis({ins[0]}, {ins[1]}, axis={axis!r})")
+                elif op == "roll":
+                    shift = node.attrs.get("shift")
+                    axis = node.attrs.get("axis")
+                    if len(ins) > 1:
+                        lines.append(f"{vname} = mx.roll({ins[0]}, {ins[1]}, axis={axis!r})")
+                    else:
+                        lines.append(f"{vname} = mx.roll({ins[0]}, {shift!r}, axis={axis!r})")
                 elif op in ("cumsum", "cumprod"):
                     axis = node.attrs.get("axis", None)
                     lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")

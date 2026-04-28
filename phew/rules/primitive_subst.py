@@ -123,11 +123,22 @@ class PrimitiveSubstPass:
             if x_node is None or weight_node is None:
                 continue
 
-            new_node = FastRMSNorm(
-                shape=node.shape,
-                dtype=node.dtype,
-                inputs=[x_node.id, weight_node.id],
-            )
+            from phew.ir import Constant
+
+            # A 0-dim constant (scalar) is not a valid per-channel weight for
+            # mx.fast.rms_norm — pass no weight so the emitter uses None.
+            if isinstance(weight_node, Constant) and weight_node.shape == ():
+                new_node = FastRMSNorm(
+                    shape=node.shape,
+                    dtype=node.dtype,
+                    inputs=[x_node.id],
+                )
+            else:
+                new_node = FastRMSNorm(
+                    shape=node.shape,
+                    dtype=node.dtype,
+                    inputs=[x_node.id, weight_node.id],
+                )
             graph.replace(node.id, new_node)
             changed = True
 
