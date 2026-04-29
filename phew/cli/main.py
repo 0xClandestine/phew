@@ -204,6 +204,11 @@ def cli():
     help="Enable Phase-2 kernel parameter search (skips fusion-generated kernels)",
 )
 @click.option(
+    "--verify-fusion/--no-verify-fusion",
+    default=False,
+    help="Verify fusion-generated kernels against original before accepting (requires MLX)",
+)
+@click.option(
     "--diff",
     is_flag=True,
     default=False,
@@ -240,6 +245,7 @@ def run(
     strategy,
     fusion,
     phase2,
+    verify_fusion,
     diff,
     diff_output,
     as_json,
@@ -281,6 +287,7 @@ def run(
         fn_name=getattr(mod, "fn_name", "optimized"),
         enable_elementwise_fusion=fusion,
         enable_phase2_search=phase2,
+        verify_fusion=verify_fusion,
     )
 
     if not as_json and not quiet:

@@ -16,9 +16,9 @@ Strategy
 
 Limitations (initial version)
 ------------------------------
-- Elementwise / same-numel ops only — no Reduce inside the kernel.
-- All external inputs must have the same numel as the kernel output (no
-  implicit broadcasting from different shapes).
+- Elementwise ops only — no Reduce inside the kernel.
+- External inputs must be broadcast-compatible with the kernel output shape;
+  inputs with incompatible shapes are rejected and the chain is not fused.
 """
 
 from __future__ import annotations
@@ -37,6 +37,18 @@ def _is_fuseable(node: "Node") -> bool:
     from phew.ir.ops import Cast, Constant, Elementwise
 
     return isinstance(node, (Elementwise, Cast, Constant))
+
+
+def _broadcast_compatible(in_shape: tuple, out_shape: tuple) -> bool:
+    """Return True if ``in_shape`` can broadcast to ``out_shape`` (NumPy rules).
+
+    Each dimension of ``in_shape`` (right-aligned against ``out_shape``) must
+    be 1 or equal to the corresponding dimension in ``out_shape``.
+    """
+    if len(in_shape) > len(out_shape):
+        return False
+    padded = (1,) * (len(out_shape) - len(in_shape)) + tuple(in_shape)
+    return all(i == 1 or i == o for i, o in zip(padded, out_shape))
 
 
 def _chain_numel(nodes: "list[Node]") -> int:
@@ -234,12 +246,13 @@ class ElementwiseFusionPass:
         if target_numel == 0:
             return False
 
-        # Guard: all external inputs must have the same numel as the output so
-        # the MSL body can use a simple identity index `elem`.  Inputs with
-        # different shapes require broadcast indexing with trace-time strides,
-        # which breaks when the verifier runs on a different problem size.
+        # Guard: all external inputs must be broadcast-compatible with the
+        # output shape.  The MSL codegen emits a strided index expression for
+        # broadcast inputs, and a plain `elem` index for same-shape inputs.
+        # Inputs that are not broadcast-compatible at all are rejected.
+        out_shape = ext_outputs[0].shape
         for inp in ext_inputs:
-            if len(inp.shape) > 0 and inp.numel != target_numel:
+            if len(inp.shape) > 0 and not _broadcast_compatible(inp.shape, out_shape):
                 return False
 
         # Guard against cycles-through-external-nodes: if any external input
