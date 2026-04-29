@@ -196,7 +196,17 @@ def cli():
     "--fusion",
     is_flag=True,
     default=False,
-    help="Enable Phase-2 elementwise fusion into Metal kernels",
+    help="Enable elementwise fusion into Metal kernels",
+)
+@click.option(
+    "--phase2/--no-phase2",
+    default=False,
+    help="Enable Phase-2 kernel parameter search (skips fusion-generated kernels)",
+)
+@click.option(
+    "--verify-fusion/--no-verify-fusion",
+    default=False,
+    help="Verify fusion-generated kernels against original before accepting (requires MLX)",
 )
 @click.option(
     "--diff",
@@ -234,6 +244,8 @@ def run(
     eqsat_iters,
     strategy,
     fusion,
+    phase2,
+    verify_fusion,
     diff,
     diff_output,
     as_json,
@@ -273,7 +285,9 @@ def run(
         max_eqsat_iters=eqsat_iters,
         extraction_strategy=strategy,
         fn_name=getattr(mod, "fn_name", "optimized"),
-        enable_fusion=fusion,
+        enable_elementwise_fusion=fusion,
+        enable_phase2_search=phase2,
+        verify_fusion=verify_fusion,
     )
 
     if not as_json and not quiet:

@@ -99,11 +99,29 @@ class MLXCodegen:
             if isinstance(node, Constant):
                 vname = fresh("c")
                 name_map[node.id] = vname
-                dtype_str = node.dtype.to_mlx() if node.dtype is not None else None
-                if dtype_str and dtype_str != "float32":
-                    lines.append(f"{vname} = mx.array({node.value!r}, dtype=mx.{dtype_str})")
+                ctor = node.attrs.get("constructor") if node.attrs else None
+                if ctor == "identity":
+                    n = node.attrs["n"]
+                    lines.append(f"{vname} = mx.identity({n!r})")
+                elif ctor == "tri":
+                    n = node.attrs["n"]
+                    m = node.attrs.get("m")
+                    k = node.attrs.get("k", 0)
+                    if m is not None and m != n:
+                        lines.append(f"{vname} = mx.tri({n!r}, {m!r}, {k!r})")
+                    elif k != 0:
+                        lines.append(f"{vname} = mx.tri({n!r}, k={k!r})")
+                    else:
+                        lines.append(f"{vname} = mx.tri({n!r})")
+                elif ctor in ("bartlett", "blackman", "hamming", "hanning"):
+                    M = node.attrs["M"]
+                    lines.append(f"{vname} = mx.{ctor}({M!r})")
                 else:
-                    lines.append(f"{vname} = mx.array({node.value!r})")
+                    dtype_str = node.dtype.to_mlx() if node.dtype is not None else None
+                    if dtype_str and dtype_str != "float32":
+                        lines.append(f"{vname} = mx.array({node.value!r}, dtype=mx.{dtype_str})")
+                    else:
+                        lines.append(f"{vname} = mx.array({node.value!r})")
                 continue
 
             ins = [name_map.get(i, f"_missing_{i}") for i in node.inputs]
@@ -134,6 +152,17 @@ class MLXCodegen:
                     # sort/argsort do not accept keepdims
                     ax = node.attrs.get("axis", -1)
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={ax!r})")
+                elif node.op == "median":
+                    ax = axes[0] if axes and len(axes) == 1 else axes
+                    lines.append(f"{vname} = mx.median({ins[0]}, axis={ax!r}, keepdims={kd})")
+                elif node.op == "trace":
+                    offset = node.attrs.get("offset", 0)
+                    ax1 = node.attrs.get("axis1", 0)
+                    ax2 = node.attrs.get("axis2", 1)
+                    lines.append(
+                        f"{vname} = mx.trace({ins[0]}, offset={offset!r}, "
+                        f"axis1={ax1!r}, axis2={ax2!r})"
+                    )
                 else:
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={axes}, keepdims={kd})")
 
@@ -176,15 +205,81 @@ class MLXCodegen:
                         lines.append(f"{vname} = mx.roll({ins[0]}, {ins[1]}, axis={axis!r})")
                     else:
                         lines.append(f"{vname} = mx.roll({ins[0]}, {shift!r}, axis={axis!r})")
-                elif op in ("cumsum", "cumprod"):
+                elif op in ("cumsum", "cumprod", "cummax", "cummin"):
                     axis = node.attrs.get("axis", None)
-                    lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")
+                    reverse = node.attrs.get("reverse", False)
+                    if reverse:
+                        lines.append(
+                            f"{vname} = mx.{op}({ins[0]}, axis={axis!r}, reverse={reverse!r})"
+                        )
+                    else:
+                        lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")
                 elif op == "logcumsumexp":
                     axis = node.attrs.get("axis", None)
                     reverse = node.attrs.get("reverse", False)
                     lines.append(
                         f"{vname} = mx.logcumsumexp({ins[0]}, axis={axis!r}, reverse={reverse!r})"
                     )
+                elif op == "tile":
+                    reps = node.attrs.get("reps", ())
+                    lines.append(f"{vname} = mx.tile({ins[0]}, {list(reps)})")
+                elif op == "diag":
+                    k = node.attrs.get("k", 0)
+                    lines.append(f"{vname} = mx.diag({ins[0]}, k={k!r})")
+                elif op == "diagonal":
+                    offset = node.attrs.get("offset", 0)
+                    ax1 = node.attrs.get("axis1", 0)
+                    ax2 = node.attrs.get("axis2", 1)
+                    lines.append(
+                        f"{vname} = mx.diagonal({ins[0]}, offset={offset!r}, "
+                        f"axis1={ax1!r}, axis2={ax2!r})"
+                    )
+                elif op == "view":
+                    dtype_str = node.attrs.get("dtype", "float32")
+                    lines.append(f"{vname} = {ins[0]}.view(mx.{dtype_str})")
+                elif op == "slice":
+                    start = list(node.attrs.get("start", []))
+                    stop = list(node.attrs.get("stop", []))
+                    strides = list(node.attrs.get("strides", []))
+                    lines.append(f"{vname} = mx.slice({ins[0]}, {start}, {stop}, {strides})")
+                elif op == "slice_update":
+                    start = list(node.attrs.get("start", []))
+                    stop = list(node.attrs.get("stop", []))
+                    strides = list(node.attrs.get("strides", []))
+                    update = ins[1] if len(ins) > 1 else "None"
+                    lines.append(
+                        f"{vname} = mx.slice_update({ins[0]}, {update}, {start}, {stop}, {strides})"
+                    )
+                elif op == "put_along_axis":
+                    axis = node.attrs.get("axis", 0)
+                    idx = ins[1] if len(ins) > 1 else "None"
+                    vals = ins[2] if len(ins) > 2 else "None"
+                    lines.append(
+                        f"{vname} = mx.put_along_axis({ins[0]}, {idx}, {vals}, axis={axis!r})"
+                    )
+                elif op == "einsum":
+                    subscripts = node.attrs.get("subscripts", "")
+                    operands = ", ".join(ins)
+                    lines.append(f"{vname} = mx.einsum({subscripts!r}, {operands})")
+                elif op == "meshgrid":
+                    indexing = node.attrs.get("indexing", "xy")
+                    sparse = node.attrs.get("sparse", False)
+                    out_idx = node.attrs.get("output_index", 0)
+                    # Emit a temp variable for the full meshgrid call on first output,
+                    # then index into it for each output.
+                    tmp = f"_mg_{vname}"
+                    if out_idx == 0:
+                        lines.append(
+                            f"{tmp} = mx.meshgrid({', '.join(ins)}, "
+                            f"sparse={sparse!r}, indexing={indexing!r})"
+                        )
+                    lines.append(f"{vname} = {tmp}[{out_idx}]")
+                elif op == "hadamard_transform":
+                    scale = node.attrs.get("scale")
+                    if scale is not None:
+                        lines.append(f"{vname} = mx.hadamard_transform({ins[0]}, scale={scale!r})")
+                    else:
+                        lines.append(f"{vname} = mx.hadamard_transform({ins[0]})")
                 elif len(ins) == 1:
                     lines.append(f"{vname} = mx.{op}({ins[0]})")
                 else:
@@ -220,51 +315,68 @@ class MLXCodegen:
 
             elif isinstance(node, Reshape):
                 vname = fresh()
-                in_sh = node.input_shape
-                out_sh = node.new_shape
-                # Detect expand_dims: one more output dim than input, new dim is exactly 1
-                expand_axis = None
-                if in_sh and len(out_sh) == len(in_sh) + 1:
-                    for i in range(len(out_sh)):
-                        if (
-                            out_sh[i] == 1
-                            and out_sh[:i] == in_sh[:i]
-                            and out_sh[i + 1 :] == in_sh[i:]
-                        ):
-                            expand_axis = i
-                            break
-                if expand_axis is not None:
-                    lines.append(f"{vname} = mx.expand_dims({ins[0]}, {expand_axis})")
+                special = node.attrs.get("special_op") if node.attrs else None
+                if special in ("atleast_1d", "atleast_2d", "atleast_3d"):
+                    lines.append(f"{vname} = mx.{special}({ins[0]})")
+                elif special == "as_strided":
+                    strides = list(node.attrs.get("strides", []))
+                    offset = node.attrs.get("offset", 0)
+                    lines.append(
+                        f"{vname} = mx.as_strided({ins[0]}, "
+                        f"{list(node.new_shape)}, {strides}, offset={offset!r})"
+                    )
                 else:
-                    # Find longest matching prefix between input and output shapes
-                    prefix = 0
-                    if in_sh:
-                        for i in range(min(len(in_sh), len(out_sh))):
-                            if in_sh[i] == out_sh[i]:
-                                prefix = i + 1
-                            else:
+                    in_sh = node.input_shape
+                    out_sh = node.new_shape
+                    # Detect expand_dims: one more output dim than input, new dim is exactly 1
+                    expand_axis = None
+                    if in_sh and len(out_sh) == len(in_sh) + 1:
+                        for i in range(len(out_sh)):
+                            if (
+                                out_sh[i] == 1
+                                and out_sh[:i] == in_sh[:i]
+                                and out_sh[i + 1 :] == in_sh[i:]
+                            ):
+                                expand_axis = i
                                 break
-                    suffix_out = out_sh[prefix:]
-                    suffix_in = in_sh[prefix:] if in_sh else ()
-                    suffix_in_prod = 1
-                    for s in suffix_in:
-                        suffix_in_prod *= s
-                    suffix_out_prod = 1
-                    for s in suffix_out:
-                        suffix_out_prod *= s
-
-                    if in_sh and prefix > 0 and suffix_in_prod == suffix_out_prod and suffix_out:
-                        # Dynamic prefix + static suffix (split or fold of trailing dims)
-                        shape_parts = ", ".join(f"{ins[0]}.shape[{i}]" for i in range(prefix))
-                        if len(suffix_out) == 1:
-                            lines.append(f"{vname} = mx.reshape({ins[0]}, [{shape_parts}, -1])")
-                        else:
-                            static_suffix = ", ".join(str(s) for s in suffix_out)
-                            lines.append(
-                                f"{vname} = mx.reshape({ins[0]}, [{shape_parts}, {static_suffix}])"
-                            )
+                    if expand_axis is not None:
+                        lines.append(f"{vname} = mx.expand_dims({ins[0]}, {expand_axis})")
                     else:
-                        lines.append(f"{vname} = mx.reshape({ins[0]}, {list(node.new_shape)})")
+                        # Find longest matching prefix between input and output shapes
+                        prefix = 0
+                        if in_sh:
+                            for i in range(min(len(in_sh), len(out_sh))):
+                                if in_sh[i] == out_sh[i]:
+                                    prefix = i + 1
+                                else:
+                                    break
+                        suffix_out = out_sh[prefix:]
+                        suffix_in = in_sh[prefix:] if in_sh else ()
+                        suffix_in_prod = 1
+                        for s in suffix_in:
+                            suffix_in_prod *= s
+                        suffix_out_prod = 1
+                        for s in suffix_out:
+                            suffix_out_prod *= s
+
+                        if (
+                            in_sh
+                            and prefix > 0
+                            and suffix_in_prod == suffix_out_prod
+                            and suffix_out
+                        ):
+                            # Dynamic prefix + static suffix (split or fold of trailing dims)
+                            shape_parts = ", ".join(f"{ins[0]}.shape[{i}]" for i in range(prefix))
+                            if len(suffix_out) == 1:
+                                lines.append(f"{vname} = mx.reshape({ins[0]}, [{shape_parts}, -1])")
+                            else:
+                                static_suffix = ", ".join(str(s) for s in suffix_out)
+                                lines.append(
+                                    f"{vname} = mx.reshape("
+                                    f"{ins[0]}, [{shape_parts}, {static_suffix}])"
+                                )
+                        else:
+                            lines.append(f"{vname} = mx.reshape({ins[0]}, {list(node.new_shape)})")
 
             elif isinstance(node, Cast):
                 vname = fresh()

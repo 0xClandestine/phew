@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from phew.ir import MetalKernel
     from phew.trace import ProfileData
+    from phew.trace.classifier import BottleneckClass
 
 
 THREADGROUP_1D = [64, 128, 256, 512, 1024]
@@ -64,15 +65,21 @@ class KernelParamSearch:
         The original kernel as a callable.
     max_candidates:
         Maximum candidates to benchmark (after cost-model pruning).
+    bottleneck:
+        Optional bottleneck class from Phase-1 profiling. When provided,
+        ``_enumerate`` prunes the search space to candidates that are
+        likely to help for that bottleneck type.
     """
 
     def __init__(
         self,
         baseline_fn: Callable | None = None,
         max_candidates: int = 50,
+        bottleneck: "BottleneckClass | None" = None,
     ) -> None:
         self.baseline_fn = baseline_fn
         self.max_candidates = max_candidates
+        self.bottleneck = bottleneck
 
     def search(
         self,
@@ -143,7 +150,18 @@ class KernelParamSearch:
         return [c for c in measured if c.verified]
 
     def _enumerate(self, node: "MetalKernel"):
-        """Yield all valid parameterizations."""
+        """Yield all valid parameterizations, pruned by bottleneck class.
+
+        Pruning is advisory: if every candidate would be eliminated the full
+        set is returned unchanged so the search always has something to try.
+        """
+        all_candidates = list(self._enumerate_all(node))
+        pruned = list(self._apply_bottleneck_filter(all_candidates))
+        # Fall back to the full set if pruning wiped everything out.
+        return pruned if pruned else all_candidates
+
+    def _enumerate_all(self, node: "MetalKernel"):
+        """Yield every combination without bottleneck filtering."""
         for tg in THREADGROUP_1D:
             for vw in VECTOR_WIDTHS:
                 for unroll in LOOP_UNROLLS:
@@ -161,6 +179,48 @@ class KernelParamSearch:
                                 ("UNROLL", unroll),
                             ],
                         )
+
+    def _apply_bottleneck_filter(self, candidates: list[KernelCandidate]):
+        """Filter candidates based on the bottleneck class."""
+        # Import here to keep the TYPE_CHECKING guard working at runtime.
+        from phew.trace.classifier import BottleneckClass
+
+        bn = self.bottleneck
+        if bn is None:
+            yield from candidates
+            return
+
+        if bn == BottleneckClass.memory_bound:
+            # High vector width helps; large threadgroups amortise launch cost.
+            for c in candidates:
+                if c.vector_width >= 2 and c.threadgroup[0] >= 128:
+                    yield c
+
+        elif bn == BottleneckClass.compute_bound:
+            # Threadgroups must be multiples of 32 (SIMD width); all VW kept.
+            for c in candidates:
+                if c.threadgroup[0] % 32 == 0:
+                    yield c
+
+        elif bn == BottleneckClass.launch_overhead:
+            # Large threadgroups + high unroll reduce dispatch overhead.
+            for c in candidates:
+                if (
+                    c.threadgroup[0] >= 256
+                    and c.loop_unroll >= 4
+                    and not (c.vector_width == 1 and c.loop_unroll == 1)
+                ):
+                    yield c
+
+        elif bn == BottleneckClass.occupancy_limited:
+            # Smaller threadgroups leave more registers per thread.
+            for c in candidates:
+                if c.threadgroup[0] <= 128:
+                    yield c
+
+        else:
+            # unknown or any future class — no pruning
+            yield from candidates
 
     def _build_kernel_fn(self, node: "MetalKernel", cand: KernelCandidate) -> Callable:
         """Build a callable that runs the kernel with the given parameters.
@@ -193,12 +253,16 @@ class KernelParamSearch:
             header=header,
         )
 
+        node_grid = node.grid
+
         def fn(*inputs):
             return kernel(
                 inputs=list(inputs),
                 output_shapes=output_shapes,
                 output_dtypes=[getattr(mx, d.to_mlx()) for d in output_dtypes],
-                grid=(inputs[0].size, 1, 1) if inputs else (1, 1, 1),
+                grid=node_grid
+                if node_grid is not None
+                else (inputs[0].size if inputs else 1, 1, 1),
                 threadgroup=tg if len(tg) == 3 else (tg[0], 1, 1),
                 template=template,
             )

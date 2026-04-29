@@ -10,6 +10,8 @@ from .parser import KernelSig
 def _msl_type_to_mx(msl_type: str) -> str:
     """Map MSL element type to mlx dtype string."""
     t = msl_type.strip().lower()
+    if "bfloat" in t:
+        return "mx.bfloat16"
     if "half" in t:
         return "mx.float16"
     if "float" in t:

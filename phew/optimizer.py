@@ -57,6 +57,10 @@ class Optimizer:
         "greedy" or "ilp".
     fn_name:
         Name for the emitted function.
+    verify_fusion:
+        When True and elementwise fusion is enabled, verify the fused graph
+        against the original function before proceeding.  If the check fails
+        the pipeline re-runs without fusion and logs a warning.
     """
 
     def __init__(
@@ -67,8 +71,10 @@ class Optimizer:
         max_eqsat_iters: int = 30,
         extraction_strategy: str = "greedy",
         fn_name: str = "optimized",
-        enable_fusion: bool = False,
+        enable_elementwise_fusion: bool = False,
+        enable_phase2_search: bool = False,
         enable_tensorops: bool = False,
+        verify_fusion: bool = False,
     ) -> None:
         self.fn = fn
         self.input_factory = input_factory
@@ -76,8 +82,10 @@ class Optimizer:
         self.max_eqsat_iters = max_eqsat_iters
         self.extraction_strategy = extraction_strategy
         self.fn_name = fn_name
-        self.enable_fusion = enable_fusion
+        self.enable_elementwise_fusion = enable_elementwise_fusion
+        self.enable_phase2_search = enable_phase2_search
         self.enable_tensorops = enable_tensorops
+        self.verify_fusion = verify_fusion
 
     def run(
         self,
@@ -148,10 +156,66 @@ class Optimizer:
             enable_compile=True,
             enable_primitive_subst=True,
             enable_tensorops=self.enable_tensorops,
-            enable_fusion=self.enable_fusion,
+            enable_fusion=self.enable_elementwise_fusion,
             enabled_subst_classes=self.enabled_subst_classes,
         )
         search_trace.append(f"  applied: {applied or 'none'}")
+
+        # ----------------------------------------------------------------
+        # Step 3b — Verify fusion-generated kernels (optional)
+        # When verify_fusion=True and fusion was enabled, emit the fused
+        # graph to a callable and check it against the original function.
+        # If verification fails, re-run passes without fusion so downstream
+        # steps get a safe graph.
+        # ----------------------------------------------------------------
+        if self.enable_elementwise_fusion and self.verify_fusion:
+            from .ir.ops import MetalKernel
+
+            has_fusion_nodes = any(
+                isinstance(n, MetalKernel) and n.attrs.get("fusion_generated")
+                for n in graph.topo_order()
+            )
+            if has_fusion_nodes:
+                search_trace.append("Step 3b: Verify fusion-generated kernels")
+                try:
+                    fused_source = MLXCodegen().emit(graph, fn_name="_phew_fused_check")
+                    fused_fn = self._build_fn_from_source(fused_source, "_phew_fused_check")
+                    fusion_checker = EquivalenceChecker(
+                        enabled_classes=self.enabled_subst_classes,
+                    )
+                    fusion_result = fusion_checker.check(self.fn, fused_fn, self.input_factory)
+                    if fusion_result.passed:
+                        search_trace.append("  fusion verification: PASS")
+                    else:
+                        search_trace.append("  fusion verification: FAIL — disabling fusion")
+                        warnings.append(
+                            "Fusion verification FAILED — re-running passes without fusion. "
+                            f"Failures: {fusion_result.failures}"
+                        )
+                        # Re-trace and re-run without fusion
+                        graph = self._graph_from_fn(args_typical, kwargs_typical)
+                        graph, applied = run_all_passes(
+                            graph,
+                            enable_compile=True,
+                            enable_primitive_subst=True,
+                            enable_tensorops=self.enable_tensorops,
+                            enable_fusion=False,
+                            enabled_subst_classes=self.enabled_subst_classes,
+                        )
+                        search_trace.append(f"  re-applied (no fusion): {applied or 'none'}")
+                except Exception as exc:
+                    warnings.append(f"Fusion verification error — disabling fusion: {exc}")
+                    search_trace.append(f"  fusion verification: ERROR ({exc}) — disabling fusion")
+                    graph = self._graph_from_fn(args_typical, kwargs_typical)
+                    graph, applied = run_all_passes(
+                        graph,
+                        enable_compile=True,
+                        enable_primitive_subst=True,
+                        enable_tensorops=self.enable_tensorops,
+                        enable_fusion=False,
+                        enabled_subst_classes=self.enabled_subst_classes,
+                    )
+                    search_trace.append(f"  re-applied (no fusion): {applied or 'none'}")
 
         # ----------------------------------------------------------------
         # Step 4 — E-graph saturation
@@ -177,19 +241,29 @@ class Optimizer:
             search_trace.append("  SKIPPED (egglog not installed)")
 
         # ----------------------------------------------------------------
-        # Step 5a — Phase-2 kernel parameter search (enable_fusion flag)
+        # Step 5a — Phase-2 kernel parameter search (enable_phase2_search flag)
         # Triggered when MetalKernel nodes appear in the graph, meaning the
         # input used mx.fast.metal_kernel and Phase-1 didn't replace it.
+        # Fusion-generated kernels are excluded (tagged with fusion_generated=True)
+        # because their valid parameter search spaces differ from user/TensorOps kernels.
         # ----------------------------------------------------------------
-        if self.enable_fusion:
+        if self.enable_phase2_search:
             from .emit import KernelParamSearch
             from .ir import MetalKernel
 
-            metal_nodes = [n for n in graph.topo_order() if isinstance(n, MetalKernel)]
+            metal_nodes = [
+                n
+                for n in graph.topo_order()
+                if isinstance(n, MetalKernel) and not n.attrs.get("fusion_generated")
+            ]
             if metal_nodes:
                 search_trace.append("Step 5a: Phase-2 kernel parameter search")
                 for knode in metal_nodes:
-                    searcher = KernelParamSearch(baseline_fn=self.fn, max_candidates=50)
+                    searcher = KernelParamSearch(
+                        baseline_fn=self.fn,
+                        max_candidates=50,
+                        bottleneck=getattr(self, "bottleneck_class", bottleneck),
+                    )
                     try:
                         candidates = searcher.search(knode, self.input_factory, profile_data)
                         if candidates:

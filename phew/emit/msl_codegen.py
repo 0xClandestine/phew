@@ -9,8 +9,9 @@ Supported node types:
   Constant     — inlined as MSL constexpr literals
 
 Limitations (initial version):
-  - Elementwise / same-shape ops only (no reductions inside the kernel)
-  - All inputs must share the same numel (broadcasting already resolved by tracer)
+  - Elementwise ops only (no reductions inside the kernel)
+  - Broadcast inputs are supported via strided index expressions; inputs that
+    are not broadcast-compatible with the output shape are rejected upstream
 """
 
 from __future__ import annotations
@@ -29,6 +30,12 @@ _DTYPE_MSL: dict[str, str] = {
     "int16": "short",
     "int8": "char",
     "uint8": "uchar",
+    "uint16": "ushort",
+    "uint32": "uint",
+    "int64": "long",
+    "uint64": "ulong",
+    "float64": "double",
+    "complex64": "float2",
     "bool": "bool",
 }
 
@@ -149,18 +156,26 @@ class SubgraphMSLCodegen:
         lines.append("uint elem = thread_position_in_grid.x;")
         lines.append("")
 
-        # Load external inputs.  All inputs are guaranteed to have the same
-        # numel as the output (enforced by the fusion pass), so `elem` is a
-        # valid flat index.  0-d arrays (numel==1, ndim==0) are passed as
-        # plain scalars by MLX — no subscript needed.
+        # Output shape — used to compute broadcast indices for narrower inputs.
+        out_shape = external_outputs[0].shape if external_outputs else ()
+
+        # Load external inputs.  If an input has the same shape as the output
+        # (or is 0-d), use a plain `elem` index.  Otherwise compute a
+        # broadcast-safe flat index via _broadcast_index.
         for node, name in zip(external_inputs, inp_names):
             t = _msl(node.dtype)
             vname = fresh()
             var[node.id] = vname
             if len(node.shape) == 0:
+                # 0-d scalar passed directly by MLX — no subscript
                 lines.append(f"{t} {vname} = {name};")
-            else:
+            elif node.shape == out_shape:
+                # Same shape — identity index
                 lines.append(f"{t} {vname} = {name}[elem];")
+            else:
+                # Broadcast input — emit a strided index expression
+                idx_expr = _broadcast_index("elem", out_shape, node.shape)
+                lines.append(f"{t} {vname} = {name}[{idx_expr}];")
 
         if external_inputs:
             lines.append("")
@@ -187,7 +202,7 @@ class SubgraphMSLCodegen:
                 if op in _BINARY_OPS and len(ins) == 2:
                     sym = _BINARY_OPS[op]
                     lines.append(f"{t} {vname} = {ins[0]} {sym} {ins[1]};")
-                elif op == "neg":
+                elif op in ("neg", "negative"):
                     lines.append(f"{t} {vname} = -{ins[0]};")
                 elif op == "abs":
                     lines.append(f"{t} {vname} = metal::abs({ins[0]});")
@@ -301,8 +316,7 @@ class SubgraphMSLCodegen:
                 elif op == "where" and len(ins) == 3:
                     lines.append(f"{t} {vname} = {ins[0]} ? {ins[1]} : {ins[2]};")
                 else:
-                    lines.append(f"// unhandled op: {op}")
-                    lines.append(f"{t} {vname} = {ins[0] if ins else '0'};")
+                    raise ValueError(f"msl_codegen: unhandled op {op!r}")
 
         # Store outputs
         if external_outputs:

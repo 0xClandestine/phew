@@ -89,6 +89,15 @@ phew metal  list kernel.metal       # list all [[kernel]] functions
 phew metal  wrap kernel.metal       # generate mx.fast.metal_kernel wrappers
 ```
 
+Selected `phew run` flags:
+
+```
+phew run my_kernel.py --strategy ilp     # joint ILP extraction (slower, sometimes better)
+phew run my_kernel.py --fusion           # enable elementwise kernel fusion
+phew run my_kernel.py --phase2           # enable Phase-2 kernel parameter search
+phew run my_kernel.py --verify-fusion    # verify fused kernels before accepting (requires MLX)
+```
+
 ### phew lint
 
 Scans Python and `.metal` files statically for known inefficiencies. No `input_factory`, no execution — just point it at a file or directory.
@@ -125,7 +134,7 @@ Catches inline single-expression patterns in Python. Split-assignment form requi
 
 **IR** (`phew/ir/`) — Two-level μGraph (Mirage-derived) covering the full MLX surface, with per-node R/W tracking inspired by the BALLS scheduling discipline. The importer monkey-patches `mlx.core` at trace time. Yes, that's as fragile as it sounds.
 
-**Graph passes** (`phew/rules/`) — Primitive substitution (RMS norm, SDPA), compile-boundary wrapping, M5/A19 TensorOps routing.
+**Graph passes** (`phew/rules/`) — Primitive substitution (RMS norm, SDPA), compile-boundary wrapping, elementwise kernel fusion (chains of ≥3 ops → single `mx.fast.metal_kernel`), M5/A19 TensorOps routing.
 
 **E-graph** (`phew/egraph/`) — Equality saturation via egglog. Greedy cost-min extraction by default; ILP fallback (scipy) when greedy gets stuck.
 
@@ -136,7 +145,7 @@ Catches inline single-expression patterns in Python. Split-assignment form requi
 | `precision` | Double-cast elimination; fp32 → fp16/bf16 (opt-in) |
 | `quantization` | `matmul → quantized_matmul(bits=4)` (opt-in) |
 | `compile_boundaries` | `matmul(a,b) → compiled(matmul(a,b))` |
-| `fusion` | Elementwise chains (placeholder) |
+| `fusion` | Elementwise chain fusion (≥3 ops, broadcast-aware) |
 
 **Cost model** (`phew/cost/`) — Pruning only; final ranking is always on-device. Bytes weighted by hierarchy (register=1, threadgroup=4, L1=8, device=32). Occupancy from Rosenzweig's M1 model.
 
@@ -159,7 +168,7 @@ Catches inline single-expression patterns in Python. Split-assignment form requi
 Named PHEW for a reason:
 
 - **E-graph round-trip is incomplete.** `_egglog_to_graph` returns the original graph unchanged — e-graph rewrites don't yet affect emitted code. Graph-level passes do apply; that's where the example speedup comes from.
-- **Phase-2 template constants** (`VW`, `UNROLL`) only take effect when the kernel source explicitly references those names. Threadgroup size is varied unconditionally via the `threadgroup=` call param and always has effect.
+- **Phase-2 VW/UNROLL template constants** only take effect when the kernel source explicitly references those names. Threadgroup size and grid dispatch are varied unconditionally and always have effect.
 - **Tracer is fragile** with control flow, in-place updates, custom Metal kernels, or nested `mx.compile`. Common patterns work (nn.Linear weights, activation functions, variadic `.transpose()`), but the right fix is MLX's graph API once it stabilizes.
 - **egglog has no shape awareness** — single `Tensor` type, no shape or dtype. Shape-aware rewrites need a structured type encoding or separate inference pass. This also blocks ILP extraction (e-class internals not exposed by the Python bindings) and primitive-subst rules in the e-graph (handled as a graph pass instead).
 - **Missing rules:** `mx.async_eval` placement, `vmap` exploitation, `mx.quantize` weight-only quantization. (`normed_matmul` — `(x@W)*rms_scalar → rms_norm(x)@W` — landed in 0.2.2 as an opt-in class.)

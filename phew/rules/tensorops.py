@@ -42,6 +42,11 @@ MIN_MATMUL_SIZE = 64  # M * N >= 64
 MIN_GENERATION = 14
 
 
+def _is_fully_static(shape: tuple) -> bool:
+    """Return True only if all dims are positive integers known at trace time."""
+    return all(isinstance(d, int) and d > 0 for d in shape)
+
+
 def _arch_generation(arch: str) -> int:
     """Extract numeric GPU generation from architecture string.
 
@@ -151,12 +156,17 @@ class TensorOpsPass:
             if len(node.shape) < 2:
                 continue
 
+            if not _is_fully_static(node.shape):
+                continue
+
             M, N = int(node.shape[-2]), int(node.shape[-1])
             if M * N < MIN_MATMUL_SIZE:
                 continue
 
             # K from first input's last dimension.
             a_node = graph[node.inputs[0]] if node.inputs and node.inputs[0] in graph else None
+            if a_node and not _is_fully_static(a_node.shape):
+                continue
             K = int(a_node.shape[-1]) if a_node and a_node.shape else 0
             if K == 0:
                 continue
@@ -166,6 +176,8 @@ class TensorOpsPass:
             batch = 1
             for d in node.shape[:-2]:
                 batch *= int(d)
+            if batch == 0:
+                continue
             grid = (
                 (N + 7) // 8,
                 (M + 7) // 8,

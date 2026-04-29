@@ -488,6 +488,9 @@ class _TracingContext:
     def min(self, x, axis=None, keepdims=False, **_):
         return self._reduce(x, "min", axis, keepdims)
 
+    def median(self, x, axis=None, keepdims=False, **_):
+        return self._reduce(x, "median", axis, keepdims)
+
     def softmax(self, x, axis=-1, **_):
         if not isinstance(x, _TracedArray):
             return x
@@ -638,6 +641,9 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def permute_dims(self, a, axes=None, **_):
+        return self.transpose(a, axes)
+
     def reshape(self, x, shape, **_):
         if not isinstance(x, _TracedArray):
             return x
@@ -710,6 +716,332 @@ class _TracingContext:
         node = Constant(shape=(n, m if m is not None else n), dtype=Dtype.float32, value=1.0)
         self._graph.add(node)
         return _TracedArray(node, self._graph)
+
+    def identity(self, n, dtype=None, **_):
+        node = Constant(
+            shape=(n, n), dtype=Dtype.float32, value=1.0, attrs={"constructor": "identity", "n": n}
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def tri(self, n, m=None, k=0, dtype=None, **_):
+        cols = m if m is not None else n
+        node = Constant(
+            shape=(n, cols),
+            dtype=Dtype.float32,
+            value=1.0,
+            attrs={"constructor": "tri", "n": n, "m": cols, "k": k},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def bartlett(self, M, **_):
+        node = Constant(
+            shape=(M,), dtype=Dtype.float32, value=0.0, attrs={"constructor": "bartlett", "M": M}
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def blackman(self, M, **_):
+        node = Constant(
+            shape=(M,), dtype=Dtype.float32, value=0.0, attrs={"constructor": "blackman", "M": M}
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def hamming(self, M, **_):
+        node = Constant(
+            shape=(M,), dtype=Dtype.float32, value=0.0, attrs={"constructor": "hamming", "M": M}
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def hanning(self, M, **_):
+        node = Constant(
+            shape=(M,), dtype=Dtype.float32, value=0.0, attrs={"constructor": "hanning", "M": M}
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def atleast_1d(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        new_shape = x.shape if len(x.shape) >= 1 else (1,)
+        node = Reshape(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            new_shape=new_shape,
+            input_shape=x.shape,
+            attrs={"special_op": "atleast_1d"},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def atleast_2d(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        ndim = len(x.shape)
+        if ndim == 0:
+            new_shape = (1, 1)
+        elif ndim == 1:
+            new_shape = (1,) + x.shape
+        else:
+            new_shape = x.shape
+        node = Reshape(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            new_shape=new_shape,
+            input_shape=x.shape,
+            attrs={"special_op": "atleast_2d"},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def atleast_3d(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        ndim = len(x.shape)
+        if ndim == 0:
+            new_shape = (1, 1, 1)
+        elif ndim == 1:
+            new_shape = (1,) + x.shape + (1,)
+        elif ndim == 2:
+            new_shape = x.shape + (1,)
+        else:
+            new_shape = x.shape
+        node = Reshape(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            new_shape=new_shape,
+            input_shape=x.shape,
+            attrs={"special_op": "atleast_3d"},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def as_strided(self, x, shape, strides, offset=0, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        new_shape = tuple(shape)
+        node = Reshape(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            new_shape=new_shape,
+            input_shape=x.shape,
+            attrs={"special_op": "as_strided", "strides": tuple(strides), "offset": offset},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def tile(self, x, reps, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        reps_t = (reps,) if isinstance(reps, int) else tuple(reps)
+        ndim = max(len(x.shape), len(reps_t))
+        padded_shape = (1,) * (ndim - len(x.shape)) + x.shape
+        padded_reps = (1,) * (ndim - len(reps_t)) + reps_t
+        new_shape = tuple(s * r for s, r in zip(padded_shape, padded_reps))
+        node = Elementwise(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="tile",
+            attrs={"reps": reps_t},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def diag(self, x, k=0, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        ndim = len(x.shape)
+        if ndim == 1:
+            n = x.shape[0] + abs(k)
+            new_shape = (n, n)
+        else:
+            rows, cols = x.shape[0], x.shape[1]
+            diag_len = max(0, min(rows, cols) - abs(k))
+            new_shape = (diag_len,)
+        node = Elementwise(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="diag",
+            attrs={"k": k},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def diagonal(self, x, offset=0, axis1=0, axis2=1, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        ndim = len(x.shape)
+        ax1 = axis1 % ndim
+        ax2 = axis2 % ndim
+        diag_len = max(0, min(x.shape[ax1], x.shape[ax2]) - abs(offset))
+        remaining = tuple(x.shape[i] for i in range(ndim) if i != ax1 and i != ax2)
+        new_shape = remaining + (diag_len,)
+        node = Elementwise(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="diagonal",
+            attrs={"offset": offset, "axis1": ax1, "axis2": ax2},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def trace(self, x, offset=0, axis1=0, axis2=1, dtype=None, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        ndim = len(x.shape)
+        ax1 = axis1 % ndim
+        ax2 = axis2 % ndim
+        new_shape = tuple(x.shape[i] for i in range(ndim) if i != ax1 and i != ax2)
+        node = Reduce(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="trace",
+            axes=(ax1, ax2),
+            keepdims=False,
+            attrs={"offset": offset, "axis1": ax1, "axis2": ax2},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def view(self, x, dtype, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        dtype_str = dtype.name if hasattr(dtype, "name") else str(dtype).split(".")[-1]
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x._node.dtype,
+            inputs=[x._node.id],
+            op="view",
+            attrs={"dtype": dtype_str},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def slice(self, x, start, stop, strides=None, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        import math as _math
+
+        start_t = tuple(start)
+        stop_t = tuple(stop)
+        strides_t = tuple(strides) if strides is not None else (1,) * len(start_t)
+        new_shape = tuple(
+            max(0, _math.ceil((e - s) / st)) for s, e, st in zip(start_t, stop_t, strides_t)
+        )
+        node = Elementwise(
+            shape=new_shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="slice",
+            attrs={"start": start_t, "stop": stop_t, "strides": strides_t},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def slice_update(self, x, update, start, stop, strides=None, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        start_t = tuple(start)
+        stop_t = tuple(stop)
+        strides_t = tuple(strides) if strides is not None else (1,) * len(start_t)
+        inputs = [x._node.id]
+        if isinstance(update, _TracedArray):
+            inputs.append(update._node.id)
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=inputs,
+            op="slice_update",
+            attrs={"start": start_t, "stop": stop_t, "strides": strides_t},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def put_along_axis(self, x, indices, values, axis, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        inputs = [x._node.id]
+        if isinstance(indices, _TracedArray):
+            inputs.append(indices._node.id)
+        if isinstance(values, _TracedArray):
+            inputs.append(values._node.id)
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=inputs,
+            op="put_along_axis",
+            attrs={"axis": axis},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def einsum(self, subscripts, *operands, **_):
+        traced = [op for op in operands if isinstance(op, _TracedArray)]
+        if not traced:
+            return operands[0] if operands else None
+        # Shape inference from subscripts is non-trivial; use first operand as placeholder.
+        node = Elementwise(
+            shape=traced[0].shape,
+            dtype=traced[0].dtype,
+            inputs=[t._node.id for t in traced],
+            op="einsum",
+            attrs={"subscripts": subscripts},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def divmod(self, x, y, **_):
+        if not isinstance(x, _TracedArray):
+            return (x // y, x % y)
+        result_shape = _broadcast_shape(
+            x.shape, y.shape if isinstance(y, _TracedArray) else x.shape
+        )
+        inputs = [x._node.id]
+        if isinstance(y, _TracedArray):
+            inputs.append(y._node.id)
+        else:
+            const = Constant(shape=(), dtype=x._node.dtype, value=y)
+            self._graph.add(const)
+            inputs.append(const.id)
+        q_node = Elementwise(shape=result_shape, dtype=x.dtype, inputs=inputs, op="floor_divide")
+        self._graph.add(q_node)
+        r_node = Elementwise(shape=result_shape, dtype=x.dtype, inputs=inputs, op="remainder")
+        self._graph.add(r_node)
+        return (_TracedArray(q_node, self._graph), _TracedArray(r_node, self._graph))
+
+    def meshgrid(self, *xi, sparse=False, indexing="xy", **_):
+        traced = [x for x in xi if isinstance(x, _TracedArray)]
+        if not traced:
+            return list(xi)
+        sizes = [x.shape[0] if x.shape else 1 for x in traced]
+        if indexing == "xy" and len(sizes) >= 2:
+            grid_shape = (sizes[1], sizes[0]) + tuple(sizes[2:])
+        else:
+            grid_shape = tuple(sizes)
+        all_ids = [t._node.id for t in traced]
+        results = []
+        for i in range(len(traced)):
+            node = Elementwise(
+                shape=grid_shape,
+                dtype=traced[0].dtype,
+                inputs=all_ids,
+                op="meshgrid",
+                attrs={"indexing": indexing, "sparse": sparse, "output_index": i},
+            )
+            self._graph.add(node)
+            results.append(_TracedArray(node, self._graph))
+        return results
 
     def arctan(self, x, **_):
         if not isinstance(x, _TracedArray):
@@ -794,6 +1126,24 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def isneginf(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from phew.ir.dtype import Dtype as _Dtype
+
+        node = Elementwise(shape=x.shape, dtype=_Dtype.bool_, inputs=[x._node.id], op="isneginf")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def isposinf(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from phew.ir.dtype import Dtype as _Dtype
+
+        node = Elementwise(shape=x.shape, dtype=_Dtype.bool_, inputs=[x._node.id], op="isposinf")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def nan_to_num(self, x, nan=0, **_):
         if not isinstance(x, _TracedArray):
             return x
@@ -815,6 +1165,30 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def conj(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="conj")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def conjugate(self, x, **_):
+        return self.conj(x)
+
+    def contiguous(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="contiguous")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def bitwise_invert(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="bitwise_invert")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def cos(self, x, **_):
         if not isinstance(x, _TracedArray):
             import math
@@ -830,6 +1204,16 @@ class _TracingContext:
 
             return math.sin(x)
         node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="sin")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def hadamard_transform(self, x, scale=None, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        attrs = {} if scale is None else {"scale": float(scale)}
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="hadamard_transform", attrs=attrs
+        )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
@@ -1504,6 +1888,36 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def _binary_elementwise(self, a, b, op):
+        """Helper: record a two-input elementwise node with broadcast shape."""
+        if not isinstance(a, _TracedArray):
+            return a
+        if not isinstance(b, _TracedArray):
+            const = Constant(shape=(), dtype=a._node.dtype, value=b)
+            self._graph.add(const)
+            b = _TracedArray(const, self._graph)
+        result_shape = _broadcast_shape(a._node.shape, b._node.shape)
+        node = Elementwise(
+            shape=result_shape, dtype=a._node.dtype, inputs=[a._node.id, b._node.id], op=op
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def bitwise_and(self, a, b, **_):
+        return self._binary_elementwise(a, b, "bitwise_and")
+
+    def bitwise_or(self, a, b, **_):
+        return self._binary_elementwise(a, b, "bitwise_or")
+
+    def bitwise_xor(self, a, b, **_):
+        return self._binary_elementwise(a, b, "bitwise_xor")
+
+    def left_shift(self, a, b, **_):
+        return self._binary_elementwise(a, b, "left_shift")
+
+    def right_shift(self, a, b, **_):
+        return self._binary_elementwise(a, b, "right_shift")
+
     def where(self, condition, x, y, **_):
         if (
             not isinstance(condition, _TracedArray)
@@ -1707,6 +2121,32 @@ class _TracingContext:
             dtype=x.dtype,
             inputs=[x._node.id],
             op="logcumsumexp",
+            attrs={"axis": axis, "reverse": reverse},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def cummax(self, x, axis=None, reverse=False, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="cummax",
+            attrs={"axis": axis, "reverse": reverse},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def cummin(self, x, axis=None, reverse=False, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="cummin",
             attrs={"axis": axis, "reverse": reverse},
         )
         self._graph.add(node)
@@ -1947,6 +2387,8 @@ def trace_to_graph(
         "partition",
         "cumsum",
         "cumprod",
+        "cummax",
+        "cummin",
         "logcumsumexp",
         "concat",
         "concatenate",
@@ -1979,9 +2421,46 @@ def trace_to_graph(
         "isfinite",
         "isinf",
         "isnan",
+        "isneginf",
+        "isposinf",
         "nan_to_num",
         "real",
         "imag",
+        "conj",
+        "conjugate",
+        "contiguous",
+        "bitwise_invert",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "left_shift",
+        "right_shift",
+        "hadamard_transform",
+        "permute_dims",
+        "median",
+        # constructors
+        "identity",
+        "tri",
+        "bartlett",
+        "blackman",
+        "hamming",
+        "hanning",
+        # TODO ops now implemented
+        "atleast_1d",
+        "atleast_2d",
+        "atleast_3d",
+        "as_strided",
+        "tile",
+        "diag",
+        "diagonal",
+        "trace",
+        "view",
+        "slice",
+        "slice_update",
+        "put_along_axis",
+        "einsum",
+        "divmod",
+        "meshgrid",
         "eval",
         "synchronize",
     ]:
