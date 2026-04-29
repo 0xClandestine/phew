@@ -29,6 +29,12 @@ _DTYPE_MSL: dict[str, str] = {
     "int16": "short",
     "int8": "char",
     "uint8": "uchar",
+    "uint16": "ushort",
+    "uint32": "uint",
+    "int64": "long",
+    "uint64": "ulong",
+    "float64": "double",
+    "complex64": "float2",
     "bool": "bool",
 }
 
@@ -187,7 +193,7 @@ class SubgraphMSLCodegen:
                 if op in _BINARY_OPS and len(ins) == 2:
                     sym = _BINARY_OPS[op]
                     lines.append(f"{t} {vname} = {ins[0]} {sym} {ins[1]};")
-                elif op == "neg":
+                elif op in ("neg", "negative"):
                     lines.append(f"{t} {vname} = -{ins[0]};")
                 elif op == "abs":
                     lines.append(f"{t} {vname} = metal::abs({ins[0]});")
@@ -301,8 +307,7 @@ class SubgraphMSLCodegen:
                 elif op == "where" and len(ins) == 3:
                     lines.append(f"{t} {vname} = {ins[0]} ? {ins[1]} : {ins[2]};")
                 else:
-                    lines.append(f"// unhandled op: {op}")
-                    lines.append(f"{t} {vname} = {ins[0] if ins else '0'};")
+                    raise ValueError(f"msl_codegen: unhandled op {op!r}")
 
         # Store outputs
         if external_outputs:

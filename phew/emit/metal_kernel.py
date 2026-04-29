@@ -193,12 +193,16 @@ class KernelParamSearch:
             header=header,
         )
 
+        node_grid = node.grid
+
         def fn(*inputs):
             return kernel(
                 inputs=list(inputs),
                 output_shapes=output_shapes,
                 output_dtypes=[getattr(mx, d.to_mlx()) for d in output_dtypes],
-                grid=(inputs[0].size, 1, 1) if inputs else (1, 1, 1),
+                grid=node_grid
+                if node_grid is not None
+                else (inputs[0].size if inputs else 1, 1, 1),
                 threadgroup=tg if len(tg) == 3 else (tg[0], 1, 1),
                 template=template,
             )

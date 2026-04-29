@@ -67,7 +67,8 @@ class Optimizer:
         max_eqsat_iters: int = 30,
         extraction_strategy: str = "greedy",
         fn_name: str = "optimized",
-        enable_fusion: bool = False,
+        enable_elementwise_fusion: bool = False,
+        enable_phase2_search: bool = False,
         enable_tensorops: bool = False,
     ) -> None:
         self.fn = fn
@@ -76,7 +77,8 @@ class Optimizer:
         self.max_eqsat_iters = max_eqsat_iters
         self.extraction_strategy = extraction_strategy
         self.fn_name = fn_name
-        self.enable_fusion = enable_fusion
+        self.enable_elementwise_fusion = enable_elementwise_fusion
+        self.enable_phase2_search = enable_phase2_search
         self.enable_tensorops = enable_tensorops
 
     def run(
@@ -148,7 +150,7 @@ class Optimizer:
             enable_compile=True,
             enable_primitive_subst=True,
             enable_tensorops=self.enable_tensorops,
-            enable_fusion=self.enable_fusion,
+            enable_fusion=self.enable_elementwise_fusion,
             enabled_subst_classes=self.enabled_subst_classes,
         )
         search_trace.append(f"  applied: {applied or 'none'}")
@@ -177,15 +179,21 @@ class Optimizer:
             search_trace.append("  SKIPPED (egglog not installed)")
 
         # ----------------------------------------------------------------
-        # Step 5a — Phase-2 kernel parameter search (enable_fusion flag)
+        # Step 5a — Phase-2 kernel parameter search (enable_phase2_search flag)
         # Triggered when MetalKernel nodes appear in the graph, meaning the
         # input used mx.fast.metal_kernel and Phase-1 didn't replace it.
+        # Fusion-generated kernels are excluded (tagged with fusion_generated=True)
+        # because their valid parameter search spaces differ from user/TensorOps kernels.
         # ----------------------------------------------------------------
-        if self.enable_fusion:
+        if self.enable_phase2_search:
             from .emit import KernelParamSearch
             from .ir import MetalKernel
 
-            metal_nodes = [n for n in graph.topo_order() if isinstance(n, MetalKernel)]
+            metal_nodes = [
+                n
+                for n in graph.topo_order()
+                if isinstance(n, MetalKernel) and not n.attrs.get("fusion_generated")
+            ]
             if metal_nodes:
                 search_trace.append("Step 5a: Phase-2 kernel parameter search")
                 for knode in metal_nodes:

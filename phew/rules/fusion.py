@@ -60,19 +60,24 @@ def _any_ext_input_descends_from_chain(
     external node (e.g. exp→Reduce→div where both exp and div are in the chain
     but the Reduce is outside).
     """
-    visited: set[int] = set()
 
-    def _has_chain_ancestor(nid: int) -> bool:
-        if nid in chain_ids:
-            return True
-        if nid in visited:
-            return False
-        visited.add(nid)
-        if nid not in graph:
-            return False
-        for inp_id in graph[nid].inputs:
-            if _has_chain_ancestor(inp_id):
+    def _has_chain_ancestor(start_id: int) -> bool:
+        from collections import deque
+
+        queue = deque([start_id])
+        seen: set[int] = set()
+        while queue:
+            nid = queue.popleft()
+            if nid in seen:
+                continue
+            seen.add(nid)
+            if nid in chain_ids:
                 return True
+            if nid not in graph:
+                continue
+            for inp_id in graph[nid].inputs:
+                if inp_id not in seen:
+                    queue.append(inp_id)
         return False
 
     for node in ext_inputs:
@@ -276,13 +281,11 @@ class ElementwiseFusionPass:
             threadgroup=(tg, 1, 1),
             grid=(grid_x, 1, 1),
             deps=MemDep.device_mem,
+            attrs={"fusion_generated": True},
         )
         graph.add(kernel_node)
 
         # Redirect all external consumers of each ext_output to the kernel node.
-        # When there's a single output, replace directly.
-        # When there are multiple outputs, consumers need the right index —
-        # for now we only redirect for the single-output case.
         if len(ext_outputs) == 1:
             old_id = ext_outputs[0].id
             for node in graph.nodes():
@@ -291,15 +294,22 @@ class ElementwiseFusionPass:
                 node.inputs = [kernel_node.id if i == old_id else i for i in node.inputs]
             graph.outputs = [kernel_node.id if o == old_id else o for o in graph.outputs]
         else:
-            # Multi-output: redirect each consumer to the kernel node
-            # (they'll all share the same kernel node output for now)
-            for ext_out in ext_outputs:
+            from phew.ir.ops import MetalKernelSelect
+
+            for i, ext_out in enumerate(ext_outputs):
+                sel = MetalKernelSelect(
+                    shape=ext_out.shape,
+                    dtype=ext_out.dtype,
+                    inputs=[kernel_node.id],
+                    output_idx=i,
+                )
+                graph.add(sel)
                 old_id = ext_out.id
                 for node in graph.nodes():
-                    if node.id == kernel_node.id:
+                    if node.id in (kernel_node.id, sel.id):
                         continue
-                    node.inputs = [kernel_node.id if i == old_id else i for i in node.inputs]
-                graph.outputs = [kernel_node.id if o == old_id else o for o in graph.outputs]
+                    node.inputs = [sel.id if i_id == old_id else i_id for i_id in node.inputs]
+                graph.outputs = [sel.id if o == old_id else o for o in graph.outputs]
 
         # Remove fused nodes from graph
         for node in chain:
