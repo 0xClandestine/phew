@@ -134,6 +134,9 @@ class MLXCodegen:
                     # sort/argsort do not accept keepdims
                     ax = node.attrs.get("axis", -1)
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={ax!r})")
+                elif node.op == "median":
+                    ax = axes[0] if axes and len(axes) == 1 else axes
+                    lines.append(f"{vname} = mx.median({ins[0]}, axis={ax!r}, keepdims={kd})")
                 else:
                     lines.append(f"{vname} = mx.{node.op}({ins[0]}, axis={axes}, keepdims={kd})")
 
@@ -176,15 +179,27 @@ class MLXCodegen:
                         lines.append(f"{vname} = mx.roll({ins[0]}, {ins[1]}, axis={axis!r})")
                     else:
                         lines.append(f"{vname} = mx.roll({ins[0]}, {shift!r}, axis={axis!r})")
-                elif op in ("cumsum", "cumprod"):
+                elif op in ("cumsum", "cumprod", "cummax", "cummin"):
                     axis = node.attrs.get("axis", None)
-                    lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")
+                    reverse = node.attrs.get("reverse", False)
+                    if reverse:
+                        lines.append(
+                            f"{vname} = mx.{op}({ins[0]}, axis={axis!r}, reverse={reverse!r})"
+                        )
+                    else:
+                        lines.append(f"{vname} = mx.{op}({ins[0]}, axis={axis!r})")
                 elif op == "logcumsumexp":
                     axis = node.attrs.get("axis", None)
                     reverse = node.attrs.get("reverse", False)
                     lines.append(
                         f"{vname} = mx.logcumsumexp({ins[0]}, axis={axis!r}, reverse={reverse!r})"
                     )
+                elif op == "hadamard_transform":
+                    scale = node.attrs.get("scale")
+                    if scale is not None:
+                        lines.append(f"{vname} = mx.hadamard_transform({ins[0]}, scale={scale!r})")
+                    else:
+                        lines.append(f"{vname} = mx.hadamard_transform({ins[0]})")
                 elif len(ins) == 1:
                     lines.append(f"{vname} = mx.{op}({ins[0]})")
                 else:

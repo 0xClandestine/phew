@@ -488,6 +488,9 @@ class _TracingContext:
     def min(self, x, axis=None, keepdims=False, **_):
         return self._reduce(x, "min", axis, keepdims)
 
+    def median(self, x, axis=None, keepdims=False, **_):
+        return self._reduce(x, "median", axis, keepdims)
+
     def softmax(self, x, axis=-1, **_):
         if not isinstance(x, _TracedArray):
             return x
@@ -637,6 +640,9 @@ class _TracingContext:
         node = Transpose(shape=new_shape, dtype=x.dtype, inputs=[x._node.id], axes=tuple(axes))
         self._graph.add(node)
         return _TracedArray(node, self._graph)
+
+    def permute_dims(self, a, axes=None, **_):
+        return self.transpose(a, axes)
 
     def reshape(self, x, shape, **_):
         if not isinstance(x, _TracedArray):
@@ -794,6 +800,24 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def isneginf(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from phew.ir.dtype import Dtype as _Dtype
+
+        node = Elementwise(shape=x.shape, dtype=_Dtype.bool_, inputs=[x._node.id], op="isneginf")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def isposinf(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        from phew.ir.dtype import Dtype as _Dtype
+
+        node = Elementwise(shape=x.shape, dtype=_Dtype.bool_, inputs=[x._node.id], op="isposinf")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def nan_to_num(self, x, nan=0, **_):
         if not isinstance(x, _TracedArray):
             return x
@@ -815,6 +839,30 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def conj(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="conj")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def conjugate(self, x, **_):
+        return self.conj(x)
+
+    def contiguous(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="contiguous")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def bitwise_invert(self, x, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="bitwise_invert")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
     def cos(self, x, **_):
         if not isinstance(x, _TracedArray):
             import math
@@ -830,6 +878,16 @@ class _TracingContext:
 
             return math.sin(x)
         node = Elementwise(shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="sin")
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def hadamard_transform(self, x, scale=None, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        attrs = {} if scale is None else {"scale": float(scale)}
+        node = Elementwise(
+            shape=x.shape, dtype=x.dtype, inputs=[x._node.id], op="hadamard_transform", attrs=attrs
+        )
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
@@ -1504,6 +1562,36 @@ class _TracingContext:
         self._graph.add(node)
         return _TracedArray(node, self._graph)
 
+    def _binary_elementwise(self, a, b, op):
+        """Helper: record a two-input elementwise node with broadcast shape."""
+        if not isinstance(a, _TracedArray):
+            return a
+        if not isinstance(b, _TracedArray):
+            const = Constant(shape=(), dtype=a._node.dtype, value=b)
+            self._graph.add(const)
+            b = _TracedArray(const, self._graph)
+        result_shape = _broadcast_shape(a._node.shape, b._node.shape)
+        node = Elementwise(
+            shape=result_shape, dtype=a._node.dtype, inputs=[a._node.id, b._node.id], op=op
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def bitwise_and(self, a, b, **_):
+        return self._binary_elementwise(a, b, "bitwise_and")
+
+    def bitwise_or(self, a, b, **_):
+        return self._binary_elementwise(a, b, "bitwise_or")
+
+    def bitwise_xor(self, a, b, **_):
+        return self._binary_elementwise(a, b, "bitwise_xor")
+
+    def left_shift(self, a, b, **_):
+        return self._binary_elementwise(a, b, "left_shift")
+
+    def right_shift(self, a, b, **_):
+        return self._binary_elementwise(a, b, "right_shift")
+
     def where(self, condition, x, y, **_):
         if (
             not isinstance(condition, _TracedArray)
@@ -1707,6 +1795,32 @@ class _TracingContext:
             dtype=x.dtype,
             inputs=[x._node.id],
             op="logcumsumexp",
+            attrs={"axis": axis, "reverse": reverse},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def cummax(self, x, axis=None, reverse=False, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="cummax",
+            attrs={"axis": axis, "reverse": reverse},
+        )
+        self._graph.add(node)
+        return _TracedArray(node, self._graph)
+
+    def cummin(self, x, axis=None, reverse=False, **_):
+        if not isinstance(x, _TracedArray):
+            return x
+        node = Elementwise(
+            shape=x.shape,
+            dtype=x.dtype,
+            inputs=[x._node.id],
+            op="cummin",
             attrs={"axis": axis, "reverse": reverse},
         )
         self._graph.add(node)
@@ -1947,6 +2061,8 @@ def trace_to_graph(
         "partition",
         "cumsum",
         "cumprod",
+        "cummax",
+        "cummin",
         "logcumsumexp",
         "concat",
         "concatenate",
@@ -1979,9 +2095,23 @@ def trace_to_graph(
         "isfinite",
         "isinf",
         "isnan",
+        "isneginf",
+        "isposinf",
         "nan_to_num",
         "real",
         "imag",
+        "conj",
+        "conjugate",
+        "contiguous",
+        "bitwise_invert",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "left_shift",
+        "right_shift",
+        "hadamard_transform",
+        "permute_dims",
+        "median",
         "eval",
         "synchronize",
     ]:
