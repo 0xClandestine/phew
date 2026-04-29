@@ -173,6 +173,33 @@ IMPLEMENTED: frozenset[str] = frozenset(
         "partition",
         "synchronize",
         "topk",
+        # --- constructors ---
+        "identity",
+        "tri",
+        "bartlett",
+        "blackman",
+        "hamming",
+        "hanning",
+        # --- shape promotion ---
+        "atleast_1d",
+        "atleast_2d",
+        "atleast_3d",
+        # --- shape / view ops ---
+        "as_strided",
+        "diag",
+        "diagonal",
+        "meshgrid",
+        "tile",
+        "view",
+        # --- slice ops ---
+        "slice",
+        "slice_update",
+        # --- scatter / gather ---
+        "put_along_axis",
+        # --- math ---
+        "divmod",
+        "einsum",
+        "trace",
     ]
 )
 
@@ -269,34 +296,7 @@ REQUIRES_NEW_NODE: frozenset[str] = frozenset(
 )
 
 #: Computational ops not yet implemented — tractable additions.
-TODO: frozenset[str] = frozenset(
-    [
-        # Shape / view
-        "as_strided",
-        "atleast_1d",
-        "slice",  # handled via __getitem__; direct mx.slice call not traced
-        "slice_update",  # handled via __setitem__; direct call not traced
-        "atleast_2d",
-        "atleast_3d",
-        "diag",
-        "diagonal",
-        "identity",
-        "meshgrid",
-        "put_along_axis",
-        "tile",
-        "trace",
-        "tri",
-        "view",
-        # Math
-        "divmod",
-        "einsum",
-        # Signal processing window functions — rarely used in ML inference graphs
-        "bartlett",
-        "blackman",
-        "hamming",
-        "hanning",
-    ]
-)
+TODO: frozenset[str] = frozenset([])
 
 # ---------------------------------------------------------------------------
 # mlx.core.fast
