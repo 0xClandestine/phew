@@ -68,6 +68,9 @@ phew run my_kernel.py --allow-fp16       # opt in to fp16 precision
 phew run my_kernel.py --allow-bf16       # opt in to bf16 precision
 phew run my_kernel.py --allow-quant      # opt in to 4-bit matmul quantization
 phew run my_kernel.py --strategy ilp     # joint ILP extraction (slower, sometimes better)
+phew run my_kernel.py --fusion           # enable elementwise kernel fusion
+phew run my_kernel.py --phase2           # enable Phase-2 kernel parameter search
+phew run my_kernel.py --verify-fusion    # verify fused kernels before accepting
 phew run my_kernel.py --json             # machine-readable result (exit 1 if no speedup)
 phew run my_kernel.py --quiet            # suppress progress and search trace
 ```
