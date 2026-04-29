@@ -86,9 +86,9 @@ class TestBuildKernelFnUsesNodeGrid:
 
         # Verify the grid passed to the kernel call is node.grid
         call_kwargs = fake_kernel.call_args[1]
-        assert (
-            call_kwargs["grid"] == expected_grid
-        ), f"Expected grid {expected_grid}, got {call_kwargs['grid']}"
+        assert call_kwargs["grid"] == expected_grid, (
+            f"Expected grid {expected_grid}, got {call_kwargs['grid']}"
+        )
 
     def test_none_grid_falls_back_to_input_size(self):
         """When node.grid is None, the closure falls back to (inputs[0].size, 1, 1)."""
@@ -188,9 +188,9 @@ class TestCandidateGeneration:
         for cand in searcher._enumerate(mk):
             # Each candidate should carry at least THREADGROUP in template_params
             names = {k for k, _ in cand.template_params}
-            assert (
-                "THREADGROUP" in names
-            ), f"Candidate missing THREADGROUP in template_params: {cand.template_params}"
+            assert "THREADGROUP" in names, (
+                f"Candidate missing THREADGROUP in template_params: {cand.template_params}"
+            )
 
     def test_candidates_vary_vector_width_and_unroll(self):
         mk = _make_metal_kernel_node()

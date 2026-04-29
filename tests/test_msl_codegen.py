@@ -210,9 +210,9 @@ def test_dtype_msl_type_name(dtype, msl_type):
 
     source, _, _ = emit([node], [inp], [node])
 
-    assert (
-        msl_type in source
-    ), f"Expected MSL type {msl_type!r} not found in source for {dtype}:\n{source}"
+    assert msl_type in source, (
+        f"Expected MSL type {msl_type!r} not found in source for {dtype}:\n{source}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +346,6 @@ def test_emit_source_is_indented():
     source, _, _ = emit([node], [inp], [node])
 
     non_empty_lines = [line for line in source.splitlines() if line.strip()]
-    assert all(
-        line.startswith("    ") for line in non_empty_lines
-    ), "Expected all non-empty source lines to be indented with 4 spaces"
+    assert all(line.startswith("    ") for line in non_empty_lines), (
+        "Expected all non-empty source lines to be indented with 4 spaces"
+    )

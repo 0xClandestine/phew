@@ -73,9 +73,9 @@ class TestTensorOpsPassEligibleMatmul:
 
         output_node = g[g.outputs[0]]
         assert isinstance(output_node, MetalKernel)
-        assert (
-            "simdgroup" in output_node.source
-        ), "MetalKernel source must use simdgroup_matrix instructions"
+        assert "simdgroup" in output_node.source, (
+            "MetalKernel source must use simdgroup_matrix instructions"
+        )
 
     def test_replacement_threadgroup_is_32(self):
         """TensorOps dispatch uses one simdgroup (32 threads) per threadgroup."""
