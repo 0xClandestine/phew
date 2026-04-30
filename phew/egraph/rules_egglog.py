@@ -126,8 +126,9 @@ def fused_ew_chain(op1: i64, op2: i64, a: Tensor) -> Tensor: ...
 def build_egraph(egraph, graph: "Graph") -> tuple:
     """Encode a phew Graph into egglog expressions.
 
-    Returns (root_expr, node_map, str_node_map) where:
-      root_expr    — egglog Expr for the output node
+    Returns (root_exprs, node_map, str_node_map) where:
+      root_exprs   — list of egglog Exprs, one per graph output (single-output
+                     graphs still return a one-element list for uniformity)
       node_map     — dict mapping id(egglog_expr) → phew Node  (for cost model)
       str_node_map — dict mapping str(egglog_expr) → phew Node  (for round-trip)
     """
@@ -220,13 +221,17 @@ def build_egraph(egraph, graph: "Graph") -> tuple:
         return expr
 
     if graph.outputs:
-        root_expr = encode(graph.outputs[-1])
+        # Encode ALL outputs so the e-graph sees the full computation.
+        # Multi-output functions (e.g. returning (y, state)) previously only
+        # encoded the last output, causing the extractor to drop all but the
+        # last return value and produce a shape-mismatched candidate.
+        root_exprs = [encode(oid) for oid in graph.outputs]
     else:
         for node in graph.topo_order():
             encode(node.id)
-        root_expr = list(expr_cache.values())[-1] if expr_cache else None
+        root_exprs = [list(expr_cache.values())[-1]] if expr_cache else []
 
-    return root_expr, node_map, str_node_map
+    return root_exprs, node_map, str_node_map
 
 
 # ---------------------------------------------------------------------------

@@ -69,7 +69,7 @@ class EGraphSaturator:
         from .rules_egglog import RULE_SETS, bottleneck_rule_sets, build_egraph
 
         egraph = EGraph()
-        root_expr, node_map, str_node_map = build_egraph(egraph, graph)
+        root_exprs, node_map, str_node_map = build_egraph(egraph, graph)
 
         # Select which rule sets to register based on bottleneck
         active_sets = bottleneck_rule_sets(
@@ -92,4 +92,4 @@ class EGraphSaturator:
             classes_after=0,
             rule_stats={name: 0 for name in active_sets},
         )
-        return graph, stats, egraph, root_expr, node_map, str_node_map
+        return graph, stats, egraph, root_exprs, node_map, str_node_map
