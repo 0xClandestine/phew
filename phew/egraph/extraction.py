@@ -115,12 +115,31 @@ class _GraphReconstructor:
         self._cache: dict[str, "Node"] = {}
 
     def build(self, expr_str: str) -> "Graph | None":
-        """Return a reconstructed Graph for *expr_str*, or None on failure."""
+        """Return a reconstructed Graph for *expr_str* (single-output), or None."""
         try:
             root_node = self._reconstruct(expr_str)
             if root_node is None:
                 return None
             self.new_graph.outputs = [root_node.id]
+            return self.new_graph
+        except Exception:
+            return None
+
+    def build_multi(self, expr_strs: "list[str]") -> "Graph | None":
+        """Return a reconstructed Graph for all outputs, or None on failure.
+
+        Each entry in *expr_strs* corresponds to one graph output in order.
+        All outputs are reconstructed sharing the same new_graph so that
+        shared intermediate nodes are not duplicated.
+        """
+        try:
+            output_ids: list[int] = []
+            for expr_str in expr_strs:
+                root_node = self._reconstruct(expr_str)
+                if root_node is None:
+                    return None
+                output_ids.append(root_node.id)
+            self.new_graph.outputs = output_ids
             return self.new_graph
         except Exception:
             return None
@@ -244,8 +263,16 @@ class _GraphReconstructor:
         return self._fallback(expr_str)
 
     def _fallback(self, expr_str: str) -> "Node | None":
-        """Return the original graph's output node when we can't reconstruct."""
-        # Return the original output node so the graph stays valid
+        """Return a safe fallback node when we can't reconstruct *expr_str*.
+
+        Tries to find the matching original node via str_node_map first so that
+        the fallback for a particular output is that output's own original node,
+        not an unrelated one.
+        """
+        node = self.str_node_map.get(expr_str)
+        if node is not None and node.id in self.new_graph:
+            return self.new_graph[node.id]
+        # Last resort: the last output of the original graph
         if self.original.outputs:
             oid = self.original.outputs[-1]
             if oid in self.new_graph:
@@ -281,7 +308,7 @@ class Extractor:
     def extract(
         self,
         egraph: "EGraph",
-        root_expr: "Expr",
+        root_exprs: "list[Expr] | Expr",
         node_map,
         original_graph: "Graph",
         str_node_map: "dict[str, Node] | None" = None,
@@ -290,15 +317,21 @@ class Extractor:
 
         cost_model = CostModel()
 
+        # Accept either a single Expr (legacy callers) or a list.
+        if not isinstance(root_exprs, list):
+            root_exprs = [root_exprs]
+
         if self.strategy == "greedy":
             return self._greedy(
-                egraph, root_expr, node_map, original_graph, cost_model, str_node_map
+                egraph, root_exprs, node_map, original_graph, cost_model, str_node_map
             )
         else:
-            return self._ilp(egraph, root_expr, node_map, original_graph, cost_model, str_node_map)
+            return self._ilp(
+                egraph, root_exprs, node_map, original_graph, cost_model, str_node_map
+            )
 
     def _greedy(
-        self, egraph, root_expr, node_map, graph, cost_model, str_node_map=None
+        self, egraph, root_exprs, node_map, graph, cost_model, str_node_map=None
     ) -> ExtractionResult:
         """Use egglog's built-in greedy extractor with a bytes-moved cost model."""
 
@@ -313,17 +346,24 @@ class Extractor:
                 return c.bytes_moved + sum(children_costs)
             return 1.0 + sum(children_costs)
 
-        extracted, cost = egraph.extract(
-            root_expr,
-            include_cost=True,
-            cost_model=bytes_moved_cost,
-        )
+        # Extract each output independently (multi-output support).
+        # Total cost is the sum across all outputs.
+        extracted_list = []
+        total_cost = 0.0
+        for root_expr in root_exprs:
+            extracted, cost = egraph.extract(
+                root_expr,
+                include_cost=True,
+                cost_model=bytes_moved_cost,
+            )
+            extracted_list.append(extracted)
+            total_cost += float(cost)
 
-        new_graph = self._egglog_to_graph(extracted, node_map, graph, str_node_map)
-        return ExtractionResult(graph=new_graph, cost=float(cost), strategy="greedy")
+        new_graph = self._egglog_to_graph(extracted_list, node_map, graph, str_node_map)
+        return ExtractionResult(graph=new_graph, cost=total_cost, strategy="greedy")
 
     def _ilp(
-        self, egraph, root_expr, node_map, graph, cost_model, str_node_map=None
+        self, egraph, root_exprs, node_map, graph, cost_model, str_node_map=None
     ) -> ExtractionResult:
         """Joint ILP extraction via scipy.optimize.milp.
 
@@ -337,37 +377,44 @@ class Extractor:
         try:
             from scipy.optimize import milp  # noqa: F401
         except ImportError:
-            return self._greedy(egraph, root_expr, node_map, graph, cost_model, str_node_map)
+            return self._greedy(egraph, root_exprs, node_map, graph, cost_model, str_node_map)
 
-        result = self._greedy(egraph, root_expr, node_map, graph, cost_model, str_node_map)
+        result = self._greedy(egraph, root_exprs, node_map, graph, cost_model, str_node_map)
         result.strategy = "ilp-fallback-greedy"
         return result
 
     def _egglog_to_graph(
         self,
-        extracted_expr,
+        extracted_exprs: "list",
         node_map,
         original_graph: "Graph",
         str_node_map: "dict[str, Node] | None" = None,
     ) -> "Graph":
-        """Convert an extracted egglog expression back to a phew Graph.
+        """Convert extracted egglog expressions back to a phew Graph.
 
-        Parses str(extracted_expr) and reconstructs the graph bottom-up.
-        Falls back to original_graph if reconstruction fails.
+        Accepts a list of extracted expressions, one per graph output.
+        All outputs are reconstructed sharing a single new_graph so that
+        shared intermediate nodes are reused rather than duplicated.
+        Falls back to original_graph if reconstruction fails for any output.
         """
         if str_node_map is None:
             str_node_map = {}
 
+        # Fast path for single-output: if the extracted expression directly
+        # matches an original node, no rewrites were applied.
+        if len(extracted_exprs) == 1:
+            try:
+                expr_str = str(extracted_exprs[0])
+            except Exception:
+                return original_graph
+            if expr_str in str_node_map:
+                return original_graph
+
         try:
-            expr_str = str(extracted_expr)
+            expr_strs = [str(e) for e in extracted_exprs]
         except Exception:
             return original_graph
 
-        # Fast path: if the extracted expression directly matches an original
-        # node, no rewrites were applied — return original unchanged.
-        if expr_str in str_node_map:
-            return original_graph
-
         reconstructor = _GraphReconstructor(original_graph, str_node_map)
-        new_graph = reconstructor.build(expr_str)
+        new_graph = reconstructor.build_multi(expr_strs)
         return new_graph if new_graph is not None else original_graph

@@ -227,13 +227,13 @@ class Optimizer:
                 bottleneck=bottleneck,
                 enabled_subst_classes=self.enabled_subst_classes,
             )
-            graph, sat_stats, egraph, root_expr, node_map, str_node_map = saturator.saturate(graph)
+            graph, sat_stats, egraph, root_exprs, node_map, str_node_map = saturator.saturate(graph)
             search_trace.append(
                 f"  iterations: {sat_stats.iterations}, nodes_before: {sat_stats.nodes_before}"
             )
 
             extractor = Extractor(strategy=self.extraction_strategy)
-            extraction = extractor.extract(egraph, root_expr, node_map, graph, str_node_map)
+            extraction = extractor.extract(egraph, root_exprs, node_map, graph, str_node_map)
             graph = extraction.graph
             search_trace.append(f"  extraction cost: {extraction.cost:.2e} ({extraction.strategy})")
         except ImportError:

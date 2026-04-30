@@ -515,13 +515,26 @@ class MLXCodegen:
                 target_numel *= s
             matching_inp = None
             if node.input_shapes:
+                # 1. Prefer exact shape match so that dynamic shape expr has
+                #    the right number of dimensions (avoids shape[1] on a 1-D tensor).
                 for var_name, in_sh in zip(ins, node.input_shapes):
-                    n = 1
-                    for s in in_sh:
-                        n *= s
-                    if n == target_numel:
+                    if tuple(in_sh) == tuple(node.output_shapes[0]):
                         matching_inp = var_name
                         break
+                # 2. Same numel but different shape: prefer the input with the most
+                #    dimensions so that {inp}.shape[i] references stay in-bounds.
+                #    Example: A_log (64,) vs a (1, 64) — both have numel 64 at B=1,
+                #    but a (1,64) matches the output shape (1,64) better.
+                if matching_inp is None:
+                    best_ndim = -1
+                    for var_name, in_sh in zip(ins, node.input_shapes):
+                        n = 1
+                        for s in in_sh:
+                            n *= s
+                        if n == target_numel and len(in_sh) > best_ndim:
+                            best_ndim = len(in_sh)
+                            matching_inp = var_name
+                # 3. Last resort: highest numel input.
                 if matching_inp is None:
                     best_n = 0
                     for var_name, in_sh in zip(ins, node.input_shapes):
