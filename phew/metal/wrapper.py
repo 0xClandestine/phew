@@ -68,7 +68,7 @@ def generate_wrapper(sig: KernelSig, source_path: str | Path) -> str:
     lines.append(f'    name="{sig.name}",')
     lines.append(f"    input_names={input_names!r},")
     lines.append(f"    output_names={output_names!r},")
-    lines.append(f'    source=open("{source_path.name}").read(),')
+    lines.append(f'    source=open("{source_path.resolve()}").read(),')
     lines.append("    # header is not needed — kernel is declared in the source above")
     lines.append(")")
     lines.append("")

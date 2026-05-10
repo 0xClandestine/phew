@@ -244,6 +244,9 @@ def parse_kernels(source: str) -> list[KernelSig]:
                     break
             i += 1
         args_str = source[paren_start + 1 : i]
+        # Strip inline // comments before splitting — comment text would otherwise
+        # bleed into the next argument's `raw` field via the bracket-depth tracker.
+        args_str = re.sub(r"//[^\n]*", "", args_str)
         raw_args = _split_args(args_str)
 
         # Find the opening { of the body
